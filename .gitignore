@@ -1,0 +1,21 @@
+# Flutter / Dart
+frontend/.dart_tool/
+frontend/build/
+frontend/.flutter-plugins*
+frontend/.packages
+frontend/pubspec.lock
+
+# Node
+backend/node_modules/
+
+# Terraform
+infra/.terraform/
+infra/*.tfstate*
+infra/*.tfvars
+infra/lambda.zip
+
+# OS / editor
+.DS_Store
+
+# Claude local settings
+.claude
