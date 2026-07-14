@@ -1,6 +1,6 @@
 {
-  "name": "Guitar Tabs",
-  "short_name": "Guitar Tabs",
+  "name": "TabStash",
+  "short_name": "TabStash",
   "start_url": ".",
   "display": "standalone",
   "background_color": "#ffffff",

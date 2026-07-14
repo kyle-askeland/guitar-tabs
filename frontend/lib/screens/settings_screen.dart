@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../storage/app_theme.dart';
 import '../storage/owner_token.dart';
 import '../storage/song_store.dart';
 
@@ -28,6 +29,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('Theme', style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 8),
+          SegmentedButton<bool>(
+            segments: const [
+              ButtonSegment(
+                value: false,
+                icon: Icon(Icons.light_mode_outlined),
+                label: Text('Light'),
+              ),
+              ButtonSegment(
+                value: true,
+                icon: Icon(Icons.dark_mode_outlined),
+                label: Text('Dark'),
+              ),
+            ],
+            selected: {darkModeNotifier.value},
+            onSelectionChanged: (v) => setDarkMode(v.first),
+          ),
+          const SizedBox(height: 24),
           Text('Owner token', style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 8),
           const Text(

@@ -39,6 +39,8 @@ test('POST creates a song, GET list and GET by id return it', async () => {
   const song = parse(created);
   assert.ok(song.songId);
   assert.deepEqual(song.tuning, ['E', 'A', 'D', 'G', 'B', 'E']);
+  assert.equal(song.beatsPerMeasure, 4);
+  assert.equal(song.notes, '');
   assert.equal(song.mine, true);
 
   const list = parse(await handler(event('GET', { token: 't1' })));
@@ -58,6 +60,26 @@ test('POST without token is 401; invalid body is 400', async () => {
   assert.equal((await handler(event('POST', { body: { title: 'x' } }))).statusCode, 401);
   assert.equal((await handler(event('POST', { token: 't', body: { title: '' } }))).statusCode, 400);
   assert.equal((await handler(event('POST', { token: 't', body: { title: 'x', sections: [{}] } }))).statusCode, 400);
+  assert.equal((await handler(event('POST', { token: 't', body: { title: 'x', beatsPerMeasure: 0 } }))).statusCode, 400);
+  assert.equal((await handler(event('POST', { token: 't', body: { title: 'x', beatsPerMeasure: 3.5 } }))).statusCode, 400);
+});
+
+test('beatsPerMeasure and notes round-trip through create and update', async () => {
+  const handler = makeHandler(fakeDb());
+  const created = parse(await handler(event('POST', {
+    token: 'owner',
+    body: { title: 'v1', beatsPerMeasure: 3, notes: 'capo 2, drop D' },
+  })));
+  assert.equal(created.beatsPerMeasure, 3);
+  assert.equal(created.notes, 'capo 2, drop D');
+
+  const updated = parse(await handler(event('PUT', {
+    id: created.songId,
+    token: 'owner',
+    body: { title: 'v2' }, // omit both — should keep prior values
+  })));
+  assert.equal(updated.beatsPerMeasure, 3);
+  assert.equal(updated.notes, 'capo 2, drop D');
 });
 
 test('PUT updates for owner, 403 for others, 404 for missing', async () => {

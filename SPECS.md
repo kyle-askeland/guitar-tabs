@@ -1,4 +1,4 @@
-# Guitar Tabs — Project Spec
+# TabStash — Project Spec
 
 A website for creating, editing, and browsing guitar tabs. Built by one person (me),
 used from both a computer and a phone browser, possibly shared openly by link (see §7),
@@ -24,12 +24,16 @@ optimized for low cost and low maintenance.
   (see §10), but v1 is web-only.
 - User accounts / login flows.
 - Audio playback or tab-to-sound rendering.
-- Importing tabs from other sites/formats (Guitar Pro, MusicXML, raw ASCII paste).
+- Importing binary tab formats (Guitar Pro, MusicXML). Pasting raw ASCII tabs
+  **is** supported (decision reversed 2026-07: it's the practical alternative to
+  scraping tab sites, which have no usable/legal APIs).
 
 ### Assumptions
 
 - **6-string guitar only** — no 7-string, bass, or other instruments.
-- **No song-list search** until the list is big enough to need it.
+- **Song-list search is client-side and explicit** — the list is fetched once,
+  and the Search button (never per-keystroke) filters it, so typing costs no
+  Lambda invocations.
 - **Connectivity required** — no offline mode (beyond the Phase 0 localStorage era).
 - **Songs live forever unless explicitly deleted** — no expiry, no archiving.
 - **Code should be as simple and efficient as possible** — this is a small personal
@@ -68,6 +72,7 @@ All AWS resources are managed with **Terraform**.
 | Database | DynamoDB on-demand | Free tier: 25 GB storage + generous read/write allowance. Effectively $0 for this use. |
 | Infra-as-code | Terraform | My preference; whole stack (DynamoDB, Lambda, API GW, S3/CloudFront) in one `terraform apply`. |
 | Access control | Anonymous ownership tokens (see §7) | No login; open read, creator-only writes. |
+| Theme | Light/dark wood, painted not shipped | A `CustomPaint` grain texture — no image asset to download. |
 
 **Estimated monthly cost: ~$0** (well within free tiers; CloudFront/S3 pennies at most).
 
@@ -75,8 +80,8 @@ All AWS resources are managed with **Terraform**.
 
 - Flutter web renders to canvas, not HTML. First load downloads a few MB of engine
   (cached afterward). Fine for this tool.
-- Browser text selection / find-in-page don't work on tab content. Mitigated by the
-  "Export as text" button (§5).
+- Browser text selection / find-in-page don't work on tab content. Accepted:
+  tabs are read and played from, not copied out.
 - Tab rendering will be done with Flutter widgets using a monospace font (or
   `CustomPaint` if the grid needs finer control).
 
@@ -94,7 +99,7 @@ renders as one row of tab on screen, e.g. ~40 columns).
 ### Notation standard
 
 The app follows standard ASCII guitar tab conventions throughout (rendering,
-editing, and text export), so tabs look like every tab on the internet:
+editing, and import), so tabs look like every tab on the internet:
 
 - **String order: high e on top, low E on bottom.** Rendered top→bottom as
   `e B G D A E` for standard tuning. (Note: the internal data model indexes
@@ -161,6 +166,8 @@ E|-------------------|-2-------2---------|
             { "col": 2, "str": 3, "fret": "0" }
           ],
           "barlines": [8, 16, 24, 32],   // column indices where a | is drawn
+          "chords":   [{ "col": 0, "name": "G" }],      // names above the staff
+          "lyrics":   [{ "col": 0, "text": "hello" }],  // words below the staff
           "length": 40
         }
       ]
@@ -177,6 +184,10 @@ Notes:
   the renderer pads the other five strings with extra dashes in that column so
   everything stays vertically aligned (same rule ASCII tabs use).
 - In Dart these become plain model classes with `toJson`/`fromJson`.
+- **Chords and lyrics are both anchored to a column**, so a chord name and the
+  words sung under it line up with the notes they belong to. (Songs written
+  before this carried one `lyric` string per line; it loads as a mark at
+  column 0.)
 
 ### DynamoDB table
 
@@ -226,15 +237,15 @@ Cheap insurance against abuse and runaway costs.
 1. **Song list** (`/`) — songs sorted by recently updated. Defaults to **"Mine"**
    (songs owned by this browser's token, filtered client-side) with an **"All"**
    toggle — so the home page isn't at the mercy of whoever else has the link.
-   "New Song" button: prompts for a title, immediately creates the (empty) song,
-   and lands in the editor at `/songs/{id}` — autosave has something to save into
-   from the first keystroke.
+   A search box filters titles and artists over both toggles, on submit only.
+   "New Song" button immediately creates the (empty) song and lands in the
+   editor at `/songs/{id}`; the timestamp title is renamed from there.
 2. **Editor** (`/songs/:id`) — the core of the app.
 3. **Play view** — read-only rendering of a song (bigger text, no cursor), the mode
    you'd actually use on a phone while holding a guitar. Could be a toggle within
    the editor screen rather than a separate route.
-4. **Settings** (`/settings`) — shows the owner token (§7) for copying to another
-   device, with a field to paste one in. Tiny screen, low priority until Phase 2.
+4. **Settings** (`/settings`) — light/dark toggle, plus the owner token (§7) for
+   copying to another device, with a field to paste one in.
 
 ### Rendering rules (must match the notation standard in §3)
 
@@ -243,8 +254,8 @@ Cheap insurance against abuse and runaway costs.
 - Dashes for empty positions, pipes for bar lines, padding rule for
   multi-character cells (§3) — so what's on screen is character-for-character
   what a standard ASCII tab would look like.
-- **Export as text** button produces a plain ASCII tab (this doubles as the escape
-  hatch for Flutter Web's lack of browser text selection).
+- No text export: pasting a tab **in** is the workflow that matters, and the
+  button was dead weight (removed 2026-07).
 
 ### Editor: click-then-type grid (decided)
 
@@ -257,7 +268,18 @@ constraints:
    a normal tab.
 2. Keep the code lean and efficient.
 
-(Raw ASCII text entry/import was considered and dropped — see non-goals.)
+(Implemented 2026-07: lines render as a solid-line staff — six drawn string
+lines with fret numbers in chips, chord names above, lyrics below, both
+anchored to columns — instead of dash characters; phones input via a tappable
+fretboard pad whose dots mirror the active column and whose four-fret window
+fits a phone; tapping the chord row picks a chord and, given its base fret,
+stamps the shape into the six strings below it; songs carry a free-text
+notes/links field; and an "Import tab" action parses pasted ASCII tabs into
+the data model.)
+
+Nothing is written to the store until **Save** is pressed — a full-width
+button pinned under the editor, showing "Saved" once it is. The song list
+refreshes the instant any save, rename, or delete lands, wherever it came from.
 
 **Desktop (keyboard-first):**
 - **Click a cell** → it becomes active (highlighted cursor).
@@ -272,16 +294,17 @@ constraints:
 - Implemented with Flutter's `Focus` + keyboard event handling.
 
 **Phone (touch):**
-- Tap a cell to select it, then enter frets via a small on-screen fret pad
-  (0–24, x, and a row of technique symbols: h p b / \ ~ |) rather than the OS
-  keyboard. Editing on the phone is expected to be occasional; the phone's main
-  job is the play view.
+- Tap a cell to select it, then enter frets on a tappable fretboard rather than
+  the OS keyboard: four frets at a time (five didn't fit), a position row to
+  slide the window up the neck, an open-string column, and a row of technique
+  symbols (h p b / \ ~ x |). Editing on the phone is expected to be occasional;
+  the phone's main job is the play view.
 
 **Both:**
 - Buttons to add/remove columns, add a new line, add/rename sections.
 - Horizontal scrolling within a line on narrow screens (never wrap mid-line).
 
-A chord-stamp palette or strumming helpers can come later.
+Strumming helpers can come later; the chord stamp is done (§9.4).
 
 ---
 
@@ -299,7 +322,7 @@ guitar-tabs/
 │   │   ├── models/          # Song, Section, Line, Cell + JSON serialization
 │   │   ├── storage/         # abstract SongStore → LocalStore, ApiStore
 │   │   ├── screens/         # song list, editor, play view
-│   │   └── widgets/         # tab grid, fret pad, section header, ...
+│   │   └── widgets/         # tab staff, fretboard pad, chord dialog, wood bg
 │   ├── test/
 │   └── pubspec.yaml
 ├── backend/                 # Lambda source (independent npm package)
@@ -399,10 +422,10 @@ Accepted caveats:
 - **This de-risks the two unknowns separately:** Flutter first, AWS second.
 
 ### Phase 1 — Editor becomes genuinely usable
-- Keyboard navigation (desktop), fret pad (touch), sections, multi-line,
+- Keyboard navigation (desktop), fretboard pad (touch), sections, multi-line,
   tuning/capo settings, delete/edit songs, read-only play view.
 - Bar lines, core technique symbols (`h`, `p`, `/`, `\`, `x` first; bends,
-  vibrato, harmonics after), export-as-text.
+  vibrato, harmonics after).
 
 ### Phase 2 — AWS backend
 - Terraform stack in `infra/`: DynamoDB table, Lambda CRUD, API Gateway,
@@ -430,7 +453,9 @@ None block starting Phase 0. Remaining, all deferrable:
    beyond that (beat markers, `W H Q E S` duration letters above the staff) is a
    bigger jump — needed?
 3. **Domain name** — custom domain, or is a CloudFront URL fine? (Phase 3 decision.)
-4. **Chord library** — worth having named chord shapes you can stamp into the grid?
+4. ~~**Chord library**~~ — answered 2026-07: yes. One movable shape per quality,
+   rooted on the low E string; the player supplies the base fret and the editor
+   stamps the notes. Open chords are just base fret 0.
 
 ---
 

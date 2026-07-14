@@ -1,4 +1,4 @@
-# guitar-tabs
+# TabStash
 
 A website for creating, editing, and browsing guitar tabs. Flutter Web frontend,
 Node.js Lambda + DynamoDB backend, all AWS resources managed with Terraform.
@@ -6,8 +6,9 @@ Design doc: [SPECS.md](SPECS.md). Agent/contributor guide: [AGENTS.md](AGENTS.md
 
 - **No login** — an anonymous owner token in localStorage grants edit/delete
   rights to the songs you created; everything is readable by anyone with the link.
-- **Standard ASCII tab notation** — high e on top, dashes for empty positions,
-  `|` bar lines, technique symbols (`h p b / \ x ~ …`), export as plain text.
+- **Standard tab notation** — high e on top, `|` bar lines, technique symbols
+  (`h p b / \ x ~ …`), chord names and lyrics anchored to their columns.
+  Pasted ASCII tabs import directly.
 - **~$0/month** — API Gateway HTTP API + Lambda + DynamoDB on-demand + S3/CloudFront,
   all within free tiers at personal scale.
 

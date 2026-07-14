@@ -21,6 +21,19 @@ terraform {
   }
 }
 
+# Every taggable resource in the stack inherits these, so this project's spend
+# can be isolated in Cost Explorer by the `Project` tag — the account hosts
+# other projects, so account-wide totals say nothing useful. The handful of
+# resources AWS won't let you tag (IAM role policy, Lambda permission, S3
+# bucket policy / public access block, API Gateway routes and integration,
+# the CloudFront OAC) are free anyway, so nothing billable goes untagged.
 provider "aws" {
   region = var.region
+
+  default_tags {
+    tags = {
+      Project   = var.name_prefix
+      ManagedBy = "terraform"
+    }
+  }
 }

@@ -33,6 +33,12 @@ function invalidSong(song) {
       return `each section needs a lines array of at most ${MAX_LINES_PER_SECTION}`;
     }
   }
+  if (song.beatsPerMeasure != null) {
+    const b = song.beatsPerMeasure;
+    if (!Number.isInteger(b) || b < 1 || b > 32) {
+      return 'beatsPerMeasure must be an integer from 1 to 32';
+    }
+  }
   return null;
 }
 
@@ -80,6 +86,8 @@ export function makeHandler(db) {
           artist: song.artist ?? '',
           tuning: song.tuning ?? ['E', 'A', 'D', 'G', 'B', 'E'],
           capo: song.capo ?? 0,
+          beatsPerMeasure: song.beatsPerMeasure ?? 4,
+          notes: song.notes ?? '',
           createdAt: now,
           updatedAt: now,
           sections: song.sections ?? [],
@@ -116,6 +124,8 @@ export function makeHandler(db) {
         artist: song.artist ?? '',
         tuning: song.tuning ?? Item.data.tuning,
         capo: song.capo ?? Item.data.capo,
+        beatsPerMeasure: song.beatsPerMeasure ?? Item.data.beatsPerMeasure,
+        notes: song.notes ?? Item.data.notes,
         sections: song.sections ?? [],
         updatedAt: new Date().toISOString(),
       };

@@ -8,8 +8,3 @@ variable "name_prefix" {
   type        = string
   default     = "guitar-tabs"
 }
-
-variable "alert_email" {
-  description = "Email for the monthly billing alert."
-  type        = string
-}
