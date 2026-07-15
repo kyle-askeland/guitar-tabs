@@ -51,6 +51,10 @@ class Line {
   final List<ChordMark> chords;
   final List<LyricMark> lyrics;
   int length;
+  /// "tab" (full six-string staff) or "chords" (chord/lyric rows only, no
+  /// staff). Lives on the line, not the song, so one song can mix a
+  /// fingerpicked intro with plain chords-and-lyrics verses.
+  String mode;
 
   Line({
     List<Cell>? cells,
@@ -58,6 +62,7 @@ class Line {
     List<ChordMark>? chords,
     List<LyricMark>? lyrics,
     this.length = 32,
+    this.mode = 'tab',
   })  : cells = cells ?? [],
         barlines = barlines ?? [8, 16, 24],
         chords = chords ?? [],
@@ -69,6 +74,7 @@ class Line {
         chords: [for (final c in j['chords'] ?? []) ChordMark.fromJson(c)],
         lyrics: _lyricsFrom(j),
         length: j['length'] ?? 32,
+        mode: j['mode'] ?? 'tab',
       );
 
   /// Songs saved before lyrics were positionable stored one string per line;
@@ -88,6 +94,7 @@ class Line {
         'chords': [for (final c in chords) c.toJson()],
         'lyrics': [for (final l in lyrics) l.toJson()],
         'length': length,
+        'mode': mode,
       };
 
   /// Display width of each column: widest cell across the six strings, min 1.

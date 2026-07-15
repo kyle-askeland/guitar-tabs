@@ -68,7 +68,7 @@ class TabStaff extends StatelessWidget {
     final col = m.colAt(pos.dx);
     if (pos.dy < m.chordH) {
       onTapChord?.call(col);
-    } else if (pos.dy < m.chordH + 6 * m.rowH) {
+    } else if (pos.dy < m.chordH + m.staffH) {
       final row = ((pos.dy - m.chordH) / m.rowH).floor().clamp(0, 5);
       onTapCell?.call(col, 5 - row); // top row = high e = str 5
     } else {
@@ -84,12 +84,16 @@ class _Metrics {
   late final double labelW = 26 * scale;
   late final double chordH;
   late final double lyricH;
+  /// Height of the six-string staff area — zero in `chords` mode, where
+  /// there's no staff at all, just chord names over lyrics.
+  late final double staffH;
   late final List<double> colW;
   late final List<double> colX; // absolute start x of each column
   late final double width;
   late final double height;
 
   _Metrics(this.line, this.scale, bool editable) {
+    staffH = line.mode == 'chords' ? 0 : 6 * rowH;
     chordH = (editable || line.chords.isNotEmpty) ? 22 * scale : 0;
     lyricH = (editable || line.lyrics.isNotEmpty) ? 24 * scale : 0;
     final charW = _measure('0', _cellStyle(scale, null)).width;
@@ -117,7 +121,7 @@ class _Metrics {
       }
     }
     width = math.max(x, text + 6 * scale) + 2;
-    height = chordH + 6 * rowH + lyricH;
+    height = chordH + staffH + lyricH;
   }
 
   /// x of the staff's right edge — where the closing barline is drawn. Not
@@ -185,21 +189,24 @@ class _StaffPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
+    final hasStaff = m.staffH > 0;
     _paintCursor(canvas);
-    _paintStrings(canvas);
-    _paintBars(canvas);
-    _paintCells(canvas);
+    if (hasStaff) {
+      _paintStrings(canvas);
+      _paintBars(canvas);
+      _paintCells(canvas);
+    }
     _paintChords(canvas);
     _paintLyrics(canvas);
-    _paintHint(canvas);
+    if (hasStaff) _paintHint(canvas);
     _paintCursorOutline(canvas);
   }
 
   void _paintCursor(Canvas canvas) {
     final col = cursorCol;
-    if (col == null || col >= line.length) return;
+    if (col == null || col >= line.length || m.staffH == 0) return;
     canvas.drawRect(
-      Rect.fromLTWH(m.colX[col], m.chordH, m.colW[col], 6 * m.rowH),
+      Rect.fromLTWH(m.colX[col], m.chordH, m.colW[col], m.staffH),
       Paint()..color = accent.withValues(alpha: .12),
     );
     final str = cursorStr;
@@ -216,7 +223,9 @@ class _StaffPainter extends CustomPainter {
   /// unmistakable (painted last, above chips).
   void _paintCursorOutline(Canvas canvas) {
     final col = cursorCol, str = cursorStr;
-    if (col == null || str == null || col >= line.length) return;
+    if (col == null || str == null || col >= line.length || m.staffH == 0) {
+      return;
+    }
     canvas.drawRRect(
       RRect.fromRectAndRadius(
         Rect.fromLTWH(m.colX[col] + 1, _sy(5 - str) - m.rowH / 2 + 1,
@@ -360,7 +369,7 @@ class _StaffPainter extends CustomPainter {
 
   void _paintLyrics(Canvas canvas) {
     if (m.lyricH == 0) return;
-    final top = m.chordH + 6 * m.rowH;
+    final top = m.chordH + m.staffH;
     final row =
         Rect.fromLTWH(m.labelW, top + 3, m.width - m.labelW - 2, m.lyricH - 6);
     if (editable) _bubble(canvas, row);

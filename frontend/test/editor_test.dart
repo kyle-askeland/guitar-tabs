@@ -41,6 +41,11 @@ void main() {
     expect(saveButton().onPressed, isNull); // clean → blocked
     expect(find.text('Saved'), findsOneWidget);
 
+    // A fresh line defaults to chords mode; switch it to tab to reach the
+    // fret staff (SPEC-DISPLAY-MODES §4).
+    await tester.tap(find.text('Chords'));
+    await tester.pump();
+
     // Tap col 0 / high e on the staff, then type a fret.
     await tester.tapAt(_staff(tester) + const Offset(41, 35));
     await tester.pump();
@@ -95,6 +100,11 @@ void main() {
     await tester.pumpWidget(MaterialApp(home: EditorScreen(id: song.songId)));
     await tester.pumpAndSettle(); // a new song opens straight into edit view
 
+    // A fresh line defaults to chords mode; switch it to tab so the lyric
+    // row sits below a full six-string staff (SPEC-DISPLAY-MODES §4).
+    await tester.tap(find.text('Chords'));
+    await tester.pump();
+
     // lyric row (below the six strings), column 3
     await tester.tapAt(_staff(tester) + const Offset(41 + 30 * 3, 22 + 6 * 26 + 12));
     await tester.pumpAndSettle();
@@ -106,6 +116,87 @@ void main() {
 
     final line = (await store.fetch(song.songId)).sections.single.lines.single;
     expect(line.lyricAt(3), 'hello darkness');
+  });
+
+  testWidgets('a brand-new song\'s first line defaults to chords mode',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final song = await store.create('Test song');
+    await tester.pumpWidget(MaterialApp(home: EditorScreen(id: song.songId)));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Chords'), findsOneWidget);
+    expect(find.text('Tab'), findsNothing);
+  });
+
+  testWidgets('+ Tab line adds a blank tab-mode line alongside the default',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final song = await store.create('Test song');
+    await tester.pumpWidget(MaterialApp(home: EditorScreen(id: song.songId)));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Tab line'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Save changes'));
+    await tester.pumpAndSettle();
+
+    final lines = (await store.fetch(song.songId)).sections.single.lines;
+    expect(lines.map((l) => l.mode), ['chords', 'tab']);
+  });
+
+  testWidgets(
+      '+ Chords paragraph splits pasted lyrics into one chords-mode line per row',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final song = await store.create('Test song');
+    await tester.pumpWidget(MaterialApp(home: EditorScreen(id: song.songId)));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Chords paragraph'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+        find.byType(TextField), 'line one\nline two\nline three');
+    await tester.tap(find.text('Add'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Save changes'));
+    await tester.pumpAndSettle();
+
+    // The default line the song opened with, plus the three pasted rows.
+    final lines = (await store.fetch(song.songId)).sections.single.lines;
+    expect(lines.length, 4);
+    expect(lines.skip(1).every((l) => l.mode == 'chords'), isTrue);
+    expect(lines[1].lyricAt(0), 'line one');
+    expect(lines[2].lyricAt(0), 'line two');
+    expect(lines[3].lyricAt(0), 'line three');
+  });
+
+  testWidgets('the mode chip flips a line between tab and chords, losslessly',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final song = await store.create('Test song');
+    await tester.pumpWidget(MaterialApp(home: EditorScreen(id: song.songId)));
+    await tester.pumpAndSettle();
+
+    // Default line is chords mode; switch to tab and stamp a fret.
+    await tester.tap(find.text('Chords'));
+    await tester.pump();
+    await tester.tapAt(_staff(tester) + const Offset(41, 35));
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.digit3);
+    await tester.pump();
+
+    // Flip back to chords and back to tab: the fret survives (§2, lossless).
+    await tester.tap(find.text('Tab'));
+    await tester.pump();
+    await tester.tap(find.text('Chords'));
+    await tester.pump();
+    await tester.tap(find.text('Save changes'));
+    await tester.pumpAndSettle();
+
+    final line = (await store.fetch(song.songId)).sections.single.lines.single;
+    expect(line.mode, 'tab');
+    expect(line.cellAt(0, 5)!.fret, '3');
   });
 
   testWidgets('an invalid tuning blocks Save with an inline error',

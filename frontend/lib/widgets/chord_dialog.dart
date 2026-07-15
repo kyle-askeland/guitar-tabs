@@ -12,9 +12,10 @@ class ChordChoice {
 }
 
 /// Pick a chord for a column, and optionally fill the tab underneath it.
-/// The shape is the movable voicing from [chordFrets]; the base fret is the
-/// one thing the app can't guess, so it's a stepper that starts at the
-/// lowest position for the chosen root.
+/// When there's no open shape, the shape is whichever movable barre family
+/// (E-shape or A-shape, see [defaultMovableShape]) reaches the root at the
+/// lower fret; the base fret is the one thing the app can't guess beyond
+/// that, so it's a stepper that starts at that lowest position.
 Future<ChordChoice?> showChordDialog(
   BuildContext context, {
   String? existing,
@@ -22,12 +23,12 @@ Future<ChordChoice?> showChordDialog(
   final parsed = existing == null ? null : splitChord(existing);
   var root = parsed?.$1 ?? 'E';
   var quality = parsed?.$2 ?? '';
-  var base = defaultBaseFor(root, quality);
+  var (family, base) = defaultShapeFor(root, quality);
 
   return showDialog<ChordChoice>(
     context: context,
     builder: (ctx) => StatefulBuilder(builder: (ctx, setState) {
-      final frets = resolveFrets(root, quality, base);
+      final frets = resolveFrets(root, quality, family, base);
       final theme = Theme.of(ctx);
       return AlertDialog(
         title: const Text('Chord'),
@@ -45,7 +46,7 @@ Future<ChordChoice?> showChordDialog(
                     // stepper below still lets you slide it up the neck.
                     onSelected: (_) => setState(() {
                       root = r;
-                      base = defaultBaseFor(r, quality);
+                      (family, base) = defaultShapeFor(r, quality);
                     }),
                   ),
               ]),
@@ -57,7 +58,7 @@ Future<ChordChoice?> showChordDialog(
                     selected: q == quality,
                     onSelected: (_) => setState(() {
                       quality = q;
-                      base = defaultBaseFor(root, q);
+                      (family, base) = defaultShapeFor(root, q);
                     }),
                   ),
               ]),
@@ -80,8 +81,13 @@ Future<ChordChoice?> showChordDialog(
                 IconButton.filledTonal(
                   icon: const Icon(Icons.add),
                   onPressed: base == null || base! < 15
-                      ? () => setState(
-                          () => base = base == null ? baseFretFor(root) : base! + 1)
+                      ? () => setState(() {
+                          if (base == null) {
+                            (family, base) = defaultMovableShape(root, quality)!;
+                          } else {
+                            base = base! + 1;
+                          }
+                        })
                       : null,
                 ),
               ]),

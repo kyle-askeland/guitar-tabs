@@ -43,6 +43,47 @@ void main() {
     expect(tappedChordCol, 1);
   });
 
+  testWidgets(
+      'chords-mode Line renders no staff; taps only reach chords/lyrics',
+      (tester) async {
+    final line = Line(length: 8, mode: 'chords')
+      ..setCell(0, 0, '3') // cells survive but never render/tap in this mode
+      ..setChord(0, 'G')
+      ..setLyric(0, 'la la');
+    int? tappedCol, tappedStr, tappedChordCol, tappedLyricCol;
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: TabStaff(
+          line: line,
+          tuning: standardTuning,
+          editable: true,
+          onTapCell: (c, s) {
+            tappedCol = c;
+            tappedStr = s;
+          },
+          onTapChord: (c) => tappedChordCol = c,
+          onTapLyric: (c) => tappedLyricCol = c,
+        ),
+      ),
+    ));
+    final paintFinder = find.descendant(
+        of: find.byType(TabStaff), matching: find.byType(CustomPaint));
+    final paint = tester.getTopLeft(paintFinder.first);
+
+    // No six-string staff: height is just the chord row + lyric row.
+    expect(tester.getSize(paintFinder.first).height, 22 + 24);
+
+    await tester.tapAt(paint + const Offset(41, 10)); // chord row, col 0
+    expect(tappedChordCol, 0);
+
+    // Below the chord row lands straight on the lyric row — there's no
+    // staff area in between to swallow the tap as a cell.
+    await tester.tapAt(paint + const Offset(41, 30));
+    expect(tappedLyricCol, 0);
+    expect(tappedCol, isNull);
+    expect(tappedStr, isNull);
+  });
+
   testWidgets('FretboardPad maps taps to (string, fret) across its 4-fret window',
       (tester) async {
     int? str, fret;

@@ -13,6 +13,8 @@ optimized for low cost and low maintenance.
 - Create a new song (name it, then enter its tab via an interactive editor).
 - Browse a list of previously created songs and open any of them.
 - Edit and delete existing songs.
+- Import songs from external sources instead of typing everything by hand
+  (see **SPEC-IMPORT.md** for sources evaluated and decisions).
 - Persist everything in a cheap AWS backend so songs survive across devices/browsers.
 - Work well on desktop (where tabs get written) and on a phone (where tabs get read while playing).
 - No login required; potentially usable by anyone with the link (§7).
@@ -24,9 +26,6 @@ optimized for low cost and low maintenance.
   (see §10), but v1 is web-only.
 - User accounts / login flows.
 - Audio playback or tab-to-sound rendering.
-- Importing binary tab formats (Guitar Pro, MusicXML). Pasting raw ASCII tabs
-  **is** supported (decision reversed 2026-07: it's the practical alternative to
-  scraping tab sites, which have no usable/legal APIs).
 
 ### Assumptions
 
@@ -98,8 +97,8 @@ renders as one row of tab on screen, e.g. ~40 columns).
 
 ### Notation standard
 
-The app follows standard ASCII guitar tab conventions throughout (rendering,
-editing, and import), so tabs look like every tab on the internet:
+The app follows standard guitar tab notation throughout (rendering, editing,
+and import), so tabs look like every tab on the internet:
 
 - **String order: high e on top, low E on bottom.** Rendered top→bottom as
   `e B G D A E` for standard tuning. (Note: the internal data model indexes
@@ -182,7 +181,7 @@ Notes:
   with plain numbers and grow into the full symbol set.
 - Multi-character cells (`12`, `5h7`) are wider than one character when rendered;
   the renderer pads the other five strings with extra dashes in that column so
-  everything stays vertically aligned (same rule ASCII tabs use).
+  everything stays vertically aligned (same rule tab notation always uses).
 - In Dart these become plain model classes with `toJson`/`fromJson`.
 - **Chords and lyrics are both anchored to a column**, so a chord name and the
   words sung under it line up with the notes they belong to. (Songs written
@@ -253,7 +252,7 @@ Cheap insurance against abuse and runaway costs.
 - Strings rendered high-e-on-top, labels derived from tuning (`e|`, `B|`, ... `E|`).
 - Dashes for empty positions, pipes for bar lines, padding rule for
   multi-character cells (§3) — so what's on screen is character-for-character
-  what a standard ASCII tab would look like.
+  what a standard tab would look like anywhere else on the internet.
 - No text export: pasting a tab **in** is the workflow that matters, and the
   button was dead weight (removed 2026-07).
 
@@ -274,8 +273,8 @@ anchored to columns — instead of dash characters; phones input via a tappable
 fretboard pad whose dots mirror the active column and whose four-fret window
 fits a phone; tapping the chord row picks a chord and, given its base fret,
 stamps the shape into the six strings below it; songs carry a free-text
-notes/links field; and an "Import tab" action parses pasted ASCII tabs into
-the data model.)
+notes/links field; and an "Import tab" action parses pasted text into the
+data model. See SPEC-IMPORT.md for import sources beyond manual paste.)
 
 Nothing is written to the store until **Save** is pressed — a full-width
 button pinned under the editor, showing "Saved" once it is. The song list

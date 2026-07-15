@@ -70,8 +70,13 @@ class _EditorScreenState extends State<EditorScreen> {
         // Existing tabs open read-only; a brand-new song has nothing to
         // show yet, so go straight into editing it.
         playView = !(s.mine && blank);
-        // A fresh song opens with an empty line ready to tap into.
-        if (s.mine && blank) s.sections.add(Section(name: ''));
+        // A fresh song opens with an empty line ready to tap into. Chords
+        // mode by default: paste-lyrics-then-tap-chords is the common case
+        // (SPEC-DISPLAY-MODES §4); dropping into tab is the explicit
+        // "+ Tab line" action below.
+        if (s.mine && blank) {
+          s.sections.add(Section(name: '', lines: [Line(mode: 'chords')]));
+        }
       }),
       onError: (e) => setState(() => loadError = '$e'),
     );
@@ -205,7 +210,9 @@ class _EditorScreenState extends State<EditorScreen> {
     final frets = choice.frets;
     if (frets != null) {
       for (var str = 0; str < 6; str++) {
-        line.setCell(col, str, frets[str]?.toString() ?? '');
+        // null = string not played in this shape — stamp it as an explicit
+        // mute (`x`, SPECS §"Techniques") rather than leaving the cell blank.
+        line.setCell(col, str, frets[str]?.toString() ?? 'x');
       }
     }
     _touch();
@@ -265,31 +272,58 @@ class _EditorScreenState extends State<EditorScreen> {
     _touch();
   }
 
-  /// Appends a fresh line (2 measures) to the song. Sections exist only in
-  /// the data model (and for imported tabs that carry names); the UI is a
-  /// flat list of lines.
-  void _addLine() {
+  /// Appends a blank tab-mode line (2 measures) to a section: the fretboard,
+  /// unchanged — for a riff that needs real frets (SPEC-DISPLAY-MODES §4).
+  void _addTabLine(int si) {
     _structural(() {
-      if (song!.sections.isEmpty) song!.sections.add(Section(name: '', lines: []));
       final length = defaultLineLength(song!.beatsPerMeasure);
-      song!.sections.last.lines.add(
-        Line(length: length, barlines: defaultBarlines(length, song!.beatsPerMeasure)),
+      song!.sections[si].lines.add(
+        Line(
+          length: length,
+          barlines: defaultBarlines(length, song!.beatsPerMeasure),
+          mode: 'tab',
+        ),
       );
     });
   }
 
-  /// Appends one measure to the last line, so a tab can be built up one
-  /// click at a time instead of committing to a whole line upfront. Starts
-  /// the first line (at a single measure) if the song has none yet.
-  void _addMeasure() {
+  /// Pastes several lines of lyrics at once; each newline becomes its own
+  /// chords-mode line (no staff), lyric row populated, chord row empty —
+  /// chords get tapped on afterward, word by word (SPEC-DISPLAY-MODES §4).
+  Future<void> _addChordsParagraph(int si) async {
+    final controller = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Chords paragraph'),
+        content: SizedBox(
+          width: 480,
+          child: TextField(
+            controller: controller,
+            autofocus: true,
+            maxLines: 10,
+            decoration: const InputDecoration(
+              hintText: 'Paste or type a verse, one lyric line per row.\n'
+                  'Tap chords onto it afterward.',
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Add')),
+        ],
+      ),
+    );
+    if (ok != true || controller.text.isEmpty) return;
     _structural(() {
-      if (song!.sections.isEmpty) song!.sections.add(Section(name: '', lines: []));
-      final lines = song!.sections.last.lines;
-      final cols = measureCols(song!.beatsPerMeasure);
-      if (lines.isEmpty) {
-        lines.add(Line(length: cols, barlines: []));
-      } else {
-        lines.last.addMeasure(cols);
+      final length = defaultLineLength(song!.beatsPerMeasure);
+      for (final row in controller.text.split('\n')) {
+        song!.sections[si].lines.add(Line(
+          mode: 'chords',
+          length: length,
+          barlines: const [],
+          lyrics: row.trim().isEmpty ? [] : [LyricMark(col: 0, text: row)],
+        ));
       }
     });
   }
@@ -320,7 +354,6 @@ class _EditorScreenState extends State<EditorScreen> {
     final s = song!;
     final title = TextEditingController(text: s.title);
     final artist = TextEditingController(text: s.artist);
-    final capo = TextEditingController(text: '${s.capo}');
     final tuning = TextEditingController(text: s.tuning.join(' '));
     final beats = TextEditingController(text: '${s.beatsPerMeasure}');
     final saved = await showDialog<bool>(
@@ -334,11 +367,6 @@ class _EditorScreenState extends State<EditorScreen> {
             child: Column(mainAxisSize: MainAxisSize.min, children: [
               TextField(controller: title, decoration: const InputDecoration(labelText: 'Title')),
               TextField(controller: artist, decoration: const InputDecoration(labelText: 'Artist')),
-              TextField(
-                controller: capo,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(labelText: 'Capo'),
-              ),
               TextField(
                 controller: tuning,
                 onChanged: (_) => setDialogState(() {}),
@@ -401,7 +429,6 @@ class _EditorScreenState extends State<EditorScreen> {
     setState(() {
       s.title = title.text.trim().isEmpty ? s.title : title.text.trim();
       s.artist = artist.text.trim();
-      s.capo = int.tryParse(capo.text) ?? s.capo;
       s.tuning = tuning.text.trim().split(RegExp(r'\s+'));
       if (newBeats != oldBeats) {
         s.beatsPerMeasure = newBeats;
@@ -417,6 +444,91 @@ class _EditorScreenState extends State<EditorScreen> {
       }
     });
     _touch();
+  }
+
+  /// Fast capo change from the badge next to the notes card — a stepper
+  /// instead of the full Song settings dialog, since capo is the one field
+  /// players actually check mid-session (SPECS: "extract capo").
+  Future<void> _quickEditCapo() async {
+    final s = song!;
+    var value = s.capo;
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(builder: (ctx, setDialogState) {
+        return AlertDialog(
+          title: const Text('Capo'),
+          content: Row(
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              IconButton.filledTonal(
+                icon: const Icon(Icons.remove),
+                onPressed:
+                    value > 0 ? () => setDialogState(() => value--) : null,
+              ),
+              SizedBox(
+                width: 120,
+                child: Text(
+                  value == 0 ? 'No capo' : 'Capo $value',
+                  textAlign: TextAlign.center,
+                  style: Theme.of(ctx).textTheme.titleMedium,
+                ),
+              ),
+              IconButton.filledTonal(
+                icon: const Icon(Icons.add),
+                onPressed:
+                    value < 12 ? () => setDialogState(() => value++) : null,
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Cancel')),
+            FilledButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('Save')),
+          ],
+        );
+      }),
+    );
+    if (saved != true || value == s.capo) return;
+    setState(() => s.capo = value);
+    _touch();
+  }
+
+  /// Capo (and non-standard tuning), shown right next to the notes card
+  /// instead of buried inside the Song settings menu. Owners get a tappable
+  /// pill straight into [_quickEditCapo]; visitors get a plain label, shown
+  /// only when there's something to say.
+  Widget _capoBadge(Song s) {
+    final nonStandard = s.tuning.join(' ') != standardTuning.join(' ');
+    if (!s.mine && s.capo == 0 && !nonStandard) return const SizedBox.shrink();
+    final label = [
+      if (s.capo > 0) 'Capo ${s.capo}' else if (s.mine) 'No capo',
+      if (nonStandard) 'Tuning ${s.tuning.join(' ')}',
+    ].join(' · ');
+    final pill = Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surface.withValues(alpha: .6),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Text(label, style: Theme.of(context).textTheme.bodySmall),
+    );
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: s.mine
+            ? InkWell(
+                borderRadius: BorderRadius.circular(8),
+                onTap: _quickEditCapo,
+                child: pill,
+              )
+            : pill,
+      ),
+    );
   }
 
   Future<void> _deleteSong() async {
@@ -577,22 +689,11 @@ class _EditorScreenState extends State<EditorScreen> {
       );
 
   Widget _buildPlayView(Song s) {
-    final nonStandard = s.tuning.join(' ') != standardTuning.join(' ');
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
+        _capoBadge(s),
         NotesCard(notes: s.notes),
-        if (s.capo > 0 || nonStandard)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 4),
-            child: Text(
-              [
-                if (s.capo > 0) 'Capo ${s.capo}',
-                if (nonStandard) 'Tuning ${s.tuning.join(' ')}',
-              ].join(' · '),
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-          ),
         for (final section in s.sections) ...[
           if (section.name.isNotEmpty)
             Padding(
@@ -616,20 +717,9 @@ class _EditorScreenState extends State<EditorScreen> {
           child: ListView(
             padding: const EdgeInsets.all(12),
             children: [
+              _capoBadge(s),
               NotesCard(notes: s.notes, onEdit: _editNotes),
               for (var si = 0; si < s.sections.length; si++) ..._section(s, si),
-              Wrap(spacing: 8, runSpacing: 8, children: [
-                WoodLegibleButton(
-                  onPressed: _addMeasure,
-                  icon: Icons.add,
-                  label: 'Add measure',
-                ),
-                WoodLegibleButton(
-                  onPressed: _addLine,
-                  icon: Icons.playlist_add,
-                  label: 'Add line',
-                ),
-              ]),
             ],
           ),
         ),
@@ -711,6 +801,7 @@ class _EditorScreenState extends State<EditorScreen> {
               onTapLyric: (col) => _editLyric(section.lines[li], col),
             ),
           ),
+          _modeChip(section.lines[li]),
           PopupMenuButton<String>(
             iconSize: 18,
             onSelected: (v) {
@@ -726,7 +817,9 @@ class _EditorScreenState extends State<EditorScreen> {
                 case 'delete':
                   _structural(() {
                     section.lines.removeAt(li);
-                    if (section.lines.isEmpty) s.sections.removeAt(si);
+                    if (section.lines.isEmpty && s.sections.length > 1) {
+                      s.sections.removeAt(si);
+                    }
                   });
               }
             },
@@ -737,7 +830,41 @@ class _EditorScreenState extends State<EditorScreen> {
             ],
           ),
         ])),
+      Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: Wrap(spacing: 8, runSpacing: 8, children: [
+          WoodLegibleButton(
+            onPressed: () => _addTabLine(si),
+            icon: Icons.piano,
+            label: 'Tab line',
+          ),
+          WoodLegibleButton(
+            onPressed: () => _addChordsParagraph(si),
+            icon: Icons.lyrics_outlined,
+            label: 'Chords paragraph',
+          ),
+        ]),
+      ),
     ];
+  }
+
+  /// Small tappable [Tab]/[Chords] label near a line's controls — one tap
+  /// flips the line's mode (SPEC-DISPLAY-MODES §4).
+  Widget _modeChip(Line line) {
+    final isTab = line.mode == 'tab';
+    return Padding(
+      padding: const EdgeInsets.only(top: 4, right: 4),
+      child: ActionChip(
+        label: Text(isTab ? 'Tab' : 'Chords'),
+        labelStyle: const TextStyle(fontSize: 11),
+        visualDensity: VisualDensity.compact,
+        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        padding: const EdgeInsets.symmetric(horizontal: 4),
+        onPressed: () => _structural(() {
+          line.mode = isTab ? 'chords' : 'tab';
+        }),
+      ),
+    );
   }
 
   bool _at(int si, int li) =>
