@@ -296,31 +296,6 @@ artist/title, or paste text directly.
   format" step). If nothing tab-shaped parses, the whole paste is treated as
   plain lyrics instead of silently discarded.
 
-### Import tooling: vaclavblazej/tabs bulk import
-
-`scripts/` (a separate Dart package, not part of `frontend/` or `backend/`)
-holds a **built, occasional/offline** script:
-`scripts/bin/import_vaclavblazej.dart` fetches `.tab` files from
-`raw.githubusercontent.com/vaclavblazej/tabs`, parses them with
-`scripts/lib/vaclavblazej_parser.dart` (reuses `parseTab` — no second
-importer parser), and `POST`s each as a `Song` through the public API. It
-runs under a **fixed constant owner token** (`importOwnerToken`, never
-regenerated), which makes every imported song read-only to regular browsers
-(shows in "All", no browser holds a matching token) and doubles as the dedup
-key on re-runs (`GET /songs` filtered to that token, skip existing
-title+artist matches). Default source directories: `english/`, `melodies/`,
-`other/` (skips `czech-slovak/` and maintainer-flagged `incomplete/`).
-
-The parser's `parseHeader` reads the source files' metadata block
-(`source:`/`video:`/`capo:`/a bare `drop D` line), folding all of it into the
-song's `notes` field as free text — `capo:` has no dedicated field here
-either, consistent with the main app's model. `buildSections` prefers
-`parseTab`'s output when it actually found real fret data, otherwise falls
-back to a more permissive chord/lyric parser (`parseChordsPermissive`) that
-tolerates the non-standard shorthand real-world files use (`Dm.`,
-`D5'D5'D5'D5'`) without dropping content. Redirect-stub files (a single line
-pointing at another file) import as nothing.
-
 ## Repository layout
 
 ```
@@ -343,10 +318,6 @@ guitar-tabs/
 │   ├── src/index.mjs         # single router: all CRUD handlers
 │   ├── test/                 # unit tests, mocked DynamoDB client
 │   └── package.json
-├── scripts/                  # offline tooling (bulk import), separate Dart package
-│   ├── bin/import_vaclavblazej.dart
-│   ├── lib/vaclavblazej_parser.dart
-│   └── test/
 └── infra/                    # Terraform, the only place AWS is defined
     ├── main.tf                # providers, S3 backend, default tags
     ├── dynamodb.tf
@@ -391,8 +362,6 @@ guitar-tabs/
 - **Backend**: `npm test` invokes the handler directly with fake API Gateway
   events and an injected mock DynamoDB client (`backend/test/handler.test.mjs`)
   — no emulator, no Docker.
-- **Scripts**: `scripts/test/vaclavblazej_parser_test.dart` unit-tests the
-  pure parsing logic (no network I/O).
 - **Integration**: `make smoke` curls the real deployed API — free tier, no
   local stack to maintain.
 

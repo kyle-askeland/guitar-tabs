@@ -63,6 +63,11 @@ open vs. settled:
 - **jasonknoll/guitar-tabs** — genuinely clean rights (real MIT license,
   explicit "free to use" statement), but as of last check has exactly one
   song in it. Worth a periodic re-check if it ever grows.
+- **vaclavblazej/tabs** — a possible source, not currently integrated. A
+  bulk-import script against this repo was built and run once, but the
+  parsed output wasn't good enough (format inconsistencies, unfamiliar
+  songs made the parsing hard to verify), so the script and its import were
+  removed. Revisit with a different parsing approach if reused.
 - **A legal source for fret-accurate tab remains an open problem.** No
   cleanly-licensed source with real per-song fret data at meaningful scale
   currently exists.
