@@ -6,7 +6,7 @@ import 'package:flutter/material.dart';
 /// Tap where your fingers go — the fret number lands on that string in the
 /// active column, so a chord is a few taps in one column. Dots mirror the
 /// active column's notes (two-way), the position row slides the window up
-/// the neck, and a symbol row covers techniques (SPECS §3).
+/// the neck, and a symbol row covers techniques (see docs/ARCHITECTURE.md).
 ///
 /// The window shows [_window] frets: four is what fits a phone without the
 /// last one being squeezed off the edge.

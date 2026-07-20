@@ -23,6 +23,7 @@ class TabStaff extends StatelessWidget {
   final void Function(int col, int str)? onTapCell;
   final void Function(int col)? onTapChord;
   final void Function(int col)? onTapLyric;
+  final void Function(int col)? onTapStrum;
 
   const TabStaff({
     super.key,
@@ -35,6 +36,7 @@ class TabStaff extends StatelessWidget {
     this.onTapCell,
     this.onTapChord,
     this.onTapLyric,
+    this.onTapStrum,
   });
 
   @override
@@ -66,10 +68,12 @@ class TabStaff extends StatelessWidget {
 
   void _tap(_Metrics m, Offset pos) {
     final col = m.colAt(pos.dx);
-    if (pos.dy < m.chordH) {
+    if (pos.dy < m.strumH) {
+      onTapStrum?.call(col);
+    } else if (pos.dy < m.strumH + m.chordH) {
       onTapChord?.call(col);
-    } else if (pos.dy < m.chordH + m.staffH) {
-      final row = ((pos.dy - m.chordH) / m.rowH).floor().clamp(0, 5);
+    } else if (pos.dy < m.strumH + m.chordH + m.staffH) {
+      final row = ((pos.dy - m.strumH - m.chordH) / m.rowH).floor().clamp(0, 5);
       onTapCell?.call(col, 5 - row); // top row = high e = str 5
     } else {
       onTapLyric?.call(col);
@@ -82,6 +86,7 @@ class _Metrics {
   final double scale;
   late final double rowH = 26 * scale;
   late final double labelW = 26 * scale;
+  late final double strumH;
   late final double chordH;
   late final double lyricH;
   /// Height of the six-string staff area — zero in `chords` mode, where
@@ -94,6 +99,7 @@ class _Metrics {
 
   _Metrics(this.line, this.scale, bool editable) {
     staffH = line.mode == 'chords' ? 0 : 6 * rowH;
+    strumH = (editable || line.strums.isNotEmpty) ? 20 * scale : 0;
     chordH = (editable || line.chords.isNotEmpty) ? 22 * scale : 0;
     lyricH = (editable || line.lyrics.isNotEmpty) ? 24 * scale : 0;
     final charW = _measure('0', _cellStyle(scale, null)).width;
@@ -112,7 +118,8 @@ class _Metrics {
     var text = x;
     for (final ch in line.chords) {
       if (ch.col < line.length) {
-        text = math.max(text, colX[ch.col] + _measure(ch.name, _chordStyle(scale, null)).width);
+        final cx = colX[ch.col] + colW[ch.col] / 2;
+        text = math.max(text, cx + _measure(ch.name, _chordStyle(scale, null)).width / 2);
       }
     }
     for (final ly in line.lyrics) {
@@ -121,7 +128,7 @@ class _Metrics {
       }
     }
     width = math.max(x, text + 6 * scale) + 2;
-    height = chordH + staffH + lyricH;
+    height = strumH + chordH + staffH + lyricH;
   }
 
   /// x of the staff's right edge — where the closing barline is drawn. Not
@@ -185,7 +192,7 @@ class _StaffPainter extends CustomPainter {
     required this.bg,
   });
 
-  double _sy(int row) => m.chordH + row * m.rowH + m.rowH / 2;
+  double _sy(int row) => m.strumH + m.chordH + row * m.rowH + m.rowH / 2;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -196,6 +203,7 @@ class _StaffPainter extends CustomPainter {
       _paintBars(canvas);
       _paintCells(canvas);
     }
+    _paintStrums(canvas);
     _paintChords(canvas);
     _paintLyrics(canvas);
     if (hasStaff) _paintHint(canvas);
@@ -206,7 +214,7 @@ class _StaffPainter extends CustomPainter {
     final col = cursorCol;
     if (col == null || col >= line.length || m.staffH == 0) return;
     canvas.drawRect(
-      Rect.fromLTWH(m.colX[col], m.chordH, m.colW[col], m.staffH),
+      Rect.fromLTWH(m.colX[col], m.strumH + m.chordH, m.colW[col], m.staffH),
       Paint()..color = accent.withValues(alpha: .12),
     );
     final str = cursorStr;
@@ -311,7 +319,12 @@ class _StaffPainter extends CustomPainter {
         Paint()..color = bg,
       );
       tp.paint(canvas, Offset(cx - tp.width / 2, cy - tp.height / 2));
-      // Slur arc over hammer-ons and pull-offs (5h7, 7p5).
+      // Slur arc over hammer-ons and pull-offs (5h7, 7p5); a straight
+      // diagonal over slides (5/7, 7\5) — curved = slur, straight = slide,
+      // the same distinction as printed tab. The diagonal's slope mirrors
+      // the typed symbol itself (`/` slopes up, `\` slopes down), so the
+      // direction reads without parsing the fret numbers.
+      final slideDir = RegExp(r'^\d+([/\\])\d+$').firstMatch(cell.fret)?.group(1);
       if (RegExp(r'^\d+[hp]\d+$').hasMatch(cell.fret)) {
         canvas.drawArc(
           Rect.fromLTWH(cx - tp.width / 2, cy - tp.height / 2 - 6 * m.scale,
@@ -323,6 +336,18 @@ class _StaffPainter extends CustomPainter {
             ..color = accent
             ..style = PaintingStyle.stroke
             ..strokeWidth = 1.4 * m.scale,
+        );
+      } else if (slideDir != null) {
+        final rect = Rect.fromLTWH(cx - tp.width / 2,
+            cy - tp.height / 2 - 6 * m.scale, tp.width, 8 * m.scale);
+        final up = slideDir == '/';
+        canvas.drawLine(
+          up ? rect.bottomLeft : rect.topLeft,
+          up ? rect.topRight : rect.bottomRight,
+          Paint()
+            ..color = accent
+            ..strokeWidth = 1.6 * m.scale
+            ..strokeCap = StrokeCap.round,
         );
       }
     }
@@ -348,9 +373,38 @@ class _StaffPainter extends CustomPainter {
         color: muted.withValues(alpha: .6),
       );
 
+  /// Arrow row above the chords: ↓ for a downstrum, ↑ for an upstrum. Downs
+  /// are painted full-strength and ups dimmed, echoing how strumming-pattern
+  /// charts bold the downbeats — direction reads from the glyph, weight from
+  /// the color, so it still lands at a glance in grayscale.
+  void _paintStrums(Canvas canvas) {
+    if (m.strumH == 0) return;
+    final row = Rect.fromLTWH(m.labelW, 1, m.width - m.labelW - 2, m.strumH - 2);
+    if (editable) _bubble(canvas, row);
+    if (line.strums.isEmpty) {
+      if (!editable) return;
+      final tp = _measure('tap above any column for a down/up strum', _hintStyle);
+      tp.paint(canvas,
+          Offset(m.labelW + 10 * m.scale, row.center.dy - tp.height / 2));
+      return;
+    }
+    for (final s in line.strums) {
+      if (s.col >= line.length) continue;
+      final down = s.dir == 'D';
+      final style = TextStyle(
+        fontSize: 14 * m.scale,
+        fontWeight: FontWeight.w900,
+        color: down ? accent : accent.withValues(alpha: .55),
+      );
+      final tp = _measure(down ? '↓' : '↑', style);
+      tp.paint(canvas,
+          Offset(m.colX[s.col] + m.colW[s.col] / 2 - tp.width / 2, row.center.dy - tp.height / 2));
+    }
+  }
+
   void _paintChords(Canvas canvas) {
     if (m.chordH == 0) return;
-    final row = Rect.fromLTWH(m.labelW, 1, m.width - m.labelW - 2, m.chordH - 4);
+    final row = Rect.fromLTWH(m.labelW, m.strumH + 1, m.width - m.labelW - 2, m.chordH - 4);
     if (editable) _bubble(canvas, row);
     if (line.chords.isEmpty) {
       if (!editable) return;
@@ -363,13 +417,14 @@ class _StaffPainter extends CustomPainter {
     for (final ch in line.chords) {
       if (ch.col >= line.length) continue;
       final tp = _measure(ch.name, style);
-      tp.paint(canvas, Offset(m.colX[ch.col] + 1, row.center.dy - tp.height / 2));
+      final cx = m.colX[ch.col] + m.colW[ch.col] / 2;
+      tp.paint(canvas, Offset(cx - tp.width / 2, row.center.dy - tp.height / 2));
     }
   }
 
   void _paintLyrics(Canvas canvas) {
     if (m.lyricH == 0) return;
-    final top = m.chordH + m.staffH;
+    final top = m.strumH + m.chordH + m.staffH;
     final row =
         Rect.fromLTWH(m.labelW, top + 3, m.width - m.labelW - 2, m.lyricH - 6);
     if (editable) _bubble(canvas, row);

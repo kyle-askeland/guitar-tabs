@@ -2,9 +2,9 @@ import 'dart:math';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// Anonymous ownership token (SPECS §7): generated on first visit, sent as
-/// `x-owner-token` on API calls. The settings screen exposes it for copying
-/// to another device.
+/// Anonymous ownership token (see docs/ARCHITECTURE.md): generated on first
+/// visit, sent as `x-owner-token` on API calls. The settings screen exposes
+/// it for copying to another device.
 Future<String> getOwnerToken() async {
   final prefs = await SharedPreferences.getInstance();
   var token = prefs.getString('ownerToken');

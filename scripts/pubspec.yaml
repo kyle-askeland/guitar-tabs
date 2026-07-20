@@ -1,0 +1,21 @@
+name: guitar_tabs_scripts
+description: >
+  One-time/occasional offline scripts that are plain clients of the deployed
+  HTTP API (SPEC-IMPORT.md §2) — not part of the Flutter app or the Lambda
+  backend, so they live here rather than in frontend/tool or backend/tool.
+publish_to: "none"
+version: 1.0.0
+
+environment:
+  sdk: ">=3.4.0 <4.0.0"
+
+dependencies:
+  http: ^1.2.0
+  # Path dependency, not a copy: reuses tab_import.dart's parseTab and
+  # song.dart's models directly (SPEC-IMPORT.md §2/§6 — "this also directly
+  # gives the bulk importer its parser for free").
+  guitar_tabs:
+    path: ../frontend
+
+dev_dependencies:
+  test: ^1.25.0

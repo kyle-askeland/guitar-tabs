@@ -14,8 +14,12 @@ resource "aws_dynamodb_table" "songs" {
     type = "S"
   }
 
-  # The undo mechanism: deletes are hard, PITR is the only recovery (SPECS §7).
+  # The undo mechanism: deletes are hard, PITR is the only recovery (see docs/ARCHITECTURE.md).
   point_in_time_recovery {
     enabled = true
+  }
+
+  lifecycle {
+    prevent_destroy = true
   }
 }

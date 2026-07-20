@@ -2,7 +2,8 @@
 
 A website for creating, editing, and browsing guitar tabs. Flutter Web frontend,
 Node.js Lambda + DynamoDB backend, all AWS resources managed with Terraform.
-Design doc: [SPECS.md](SPECS.md). Agent/contributor guide: [AGENTS.md](AGENTS.md).
+Architecture doc: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). What's next:
+[docs/ROADMAP.md](docs/ROADMAP.md). Agent/contributor guide: [AGENTS.md](AGENTS.md).
 
 - **No login** — an anonymous owner token in localStorage grants edit/delete
   rights to the songs you created; everything is readable by anyone with the link.
@@ -44,8 +45,7 @@ make deploy       # terraform apply + flutter build web + s3 sync + CF invalidat
 make smoke        # curl the deployed API
 ```
 
-`terraform apply` asks for `alert_email` (billing alert at $5/month) unless set
-in a tfvars file. Outputs include `api_url` and `site_url` (the CloudFront domain).
+Outputs include `api_url` and `site_url` (the CloudFront domain).
 
 Frontend-only changes: `make deploy-frontend`. Backend/infra changes:
 `make deploy-infra` (Lambda code is zipped and deployed by Terraform,

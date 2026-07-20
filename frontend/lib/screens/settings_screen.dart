@@ -4,8 +4,9 @@ import '../storage/app_theme.dart';
 import '../storage/owner_token.dart';
 import '../storage/song_store.dart';
 
-/// Shows the anonymous owner token (SPECS §7) so it can be copied to another
-/// device; pasting a token here transfers this browser's identity.
+/// Shows the anonymous owner token (see docs/ARCHITECTURE.md) so it can be
+/// copied to another device; pasting a token here transfers this browser's
+/// identity.
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
 

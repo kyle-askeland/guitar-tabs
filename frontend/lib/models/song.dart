@@ -1,6 +1,6 @@
-/// Data model per SPECS §3. Strings are indexed 0 = low E; the renderer
-/// reverses for display. `fret` is a string so it can hold technique
-/// notation (`x`, `5h7`, `<12>`, ...), never parsed as a number.
+/// Data model per docs/ARCHITECTURE.md. Strings are indexed 0 = low E; the
+/// renderer reverses for display. `fret` is a string so it can hold
+/// technique notation (`x`, `5h7`, `<12>`, ...), never parsed as a number.
 library;
 
 const standardTuning = ['E', 'A', 'D', 'G', 'B', 'E'];
@@ -45,11 +45,27 @@ class LyricMark {
   Map<String, dynamic> toJson() => {'col': col, 'text': text};
 }
 
+/// A strum direction ('D' down, 'U' up) at a column — the rhythm layer,
+/// shown as an arrow row above the chords rather than attached to any one
+/// string.
+class StrumMark {
+  final int col;
+  final String dir;
+
+  StrumMark({required this.col, required this.dir});
+
+  factory StrumMark.fromJson(Map<String, dynamic> j) =>
+      StrumMark(col: j['col'], dir: j['dir']);
+
+  Map<String, dynamic> toJson() => {'col': col, 'dir': dir};
+}
+
 class Line {
   final List<Cell> cells;
   final List<int> barlines;
   final List<ChordMark> chords;
   final List<LyricMark> lyrics;
+  final List<StrumMark> strums;
   int length;
   /// "tab" (full six-string staff) or "chords" (chord/lyric rows only, no
   /// staff). Lives on the line, not the song, so one song can mix a
@@ -61,18 +77,21 @@ class Line {
     List<int>? barlines,
     List<ChordMark>? chords,
     List<LyricMark>? lyrics,
+    List<StrumMark>? strums,
     this.length = 32,
     this.mode = 'tab',
   })  : cells = cells ?? [],
         barlines = barlines ?? [8, 16, 24],
         chords = chords ?? [],
-        lyrics = lyrics ?? [];
+        lyrics = lyrics ?? [],
+        strums = strums ?? [];
 
   factory Line.fromJson(Map<String, dynamic> j) => Line(
         cells: [for (final c in j['cells'] ?? []) Cell.fromJson(c)],
         barlines: List<int>.from(j['barlines'] ?? []),
         chords: [for (final c in j['chords'] ?? []) ChordMark.fromJson(c)],
         lyrics: _lyricsFrom(j),
+        strums: [for (final s in j['strums'] ?? []) StrumMark.fromJson(s)],
         length: j['length'] ?? 32,
         mode: j['mode'] ?? 'tab',
       );
@@ -93,13 +112,14 @@ class Line {
         'barlines': barlines,
         'chords': [for (final c in chords) c.toJson()],
         'lyrics': [for (final l in lyrics) l.toJson()],
+        'strums': [for (final s in strums) s.toJson()],
         'length': length,
         'mode': mode,
       };
 
   /// Display width of each column: widest cell across the six strings, min 1.
   /// Multi-character cells (`12`, `5h7`) widen their column so the strings
-  /// stay vertically aligned (SPECS §3).
+  /// stay vertically aligned (see docs/ARCHITECTURE.md).
   List<int> get columnWidths {
     final widths = List.filled(length, 1);
     for (final c in cells) {
@@ -144,6 +164,23 @@ class Line {
     }
   }
 
+  String? strumAt(int col) {
+    for (final s in strums) {
+      if (s.col == col) return s.dir;
+    }
+    return null;
+  }
+
+  /// Sets, replaces, or (with an empty dir) clears the strum at a column.
+  void setStrum(int col, String dir) {
+    strums.removeWhere((s) => s.col == col);
+    if (dir.isNotEmpty) {
+      strums
+        ..add(StrumMark(col: col, dir: dir))
+        ..sort((a, b) => a.col - b.col);
+    }
+  }
+
   Cell? cellAt(int col, int str) {
     for (final c in cells) {
       if (c.col == col && c.str == str) return c;
@@ -174,6 +211,7 @@ class Line {
     barlines.removeWhere((b) => b >= length);
     chords.removeWhere((c) => c.col >= length);
     lyrics.removeWhere((l) => l.col >= length);
+    strums.removeWhere((s) => s.col >= length);
     return true;
   }
 
@@ -188,7 +226,8 @@ class Line {
     bool lost(int col) => remapColumn(col, oldCols, newCols) == null;
     return cells.where((c) => lost(c.col)).length +
         chords.where((c) => lost(c.col)).length +
-        lyrics.where((l) => lost(l.col)).length;
+        lyrics.where((l) => lost(l.col)).length +
+        strums.where((s) => lost(s.col)).length;
   }
 
   /// Re-lays the line onto a grid of [newBeats] beats per measure: every
@@ -226,6 +265,14 @@ class Line {
     lyrics
       ..clear()
       ..addAll(newLyrics);
+    final newStrums = [
+      for (final s in strums)
+        if (remapColumn(s.col, oldCols, newCols) case final nc?)
+          StrumMark(col: nc, dir: s.dir)
+    ];
+    strums
+      ..clear()
+      ..addAll(newStrums);
     final newBarlines = [
       for (final b in barlines)
         if (remapColumn(b, oldCols, newCols) case final nb?) nb
@@ -256,7 +303,6 @@ class Song {
   String title;
   String artist;
   List<String> tuning; // low → high
-  int capo;
   int beatsPerMeasure;
   String notes; // free text: practice notes, tutorial links, ...
   final String createdAt;
@@ -269,7 +315,6 @@ class Song {
     required this.title,
     this.artist = '',
     List<String>? tuning,
-    this.capo = 0,
     this.beatsPerMeasure = 4,
     this.notes = '',
     this.createdAt = '',
@@ -284,7 +329,6 @@ class Song {
         title: j['title'] ?? '',
         artist: j['artist'] ?? '',
         tuning: List<String>.from(j['tuning'] ?? standardTuning),
-        capo: j['capo'] ?? 0,
         beatsPerMeasure: j['beatsPerMeasure'] ?? 4,
         notes: j['notes'] ?? '',
         createdAt: j['createdAt'] ?? '',
@@ -298,7 +342,6 @@ class Song {
         'title': title,
         'artist': artist,
         'tuning': tuning,
-        'capo': capo,
         'beatsPerMeasure': beatsPerMeasure,
         'notes': notes,
         'createdAt': createdAt,

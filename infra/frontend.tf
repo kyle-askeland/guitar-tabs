@@ -3,6 +3,10 @@
 
 resource "aws_s3_bucket" "site" {
   bucket_prefix = "${var.name_prefix}-site-"
+
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "aws_s3_bucket_public_access_block" "site" {

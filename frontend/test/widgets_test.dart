@@ -33,13 +33,14 @@ void main() {
     final paint = tester.getTopLeft(find
         .descendant(of: find.byType(TabStaff), matching: find.byType(CustomPaint))
         .first);
-    // geometry at scale 1: labelW 26, chordH 22, rowH 26, min col width 30
-    await tester.tapAt(paint + const Offset(41, 35)); // col 0, top row = high e
+    // geometry at scale 1: labelW 26, strumH 20, chordH 22, rowH 26, min col width 30
+    await tester.tapAt(paint + const Offset(41, 55)); // col 0, top row = high e
     expect(tappedCol, 0);
     expect(tappedStr, 5);
-    await tester.tapAt(paint + const Offset(41 + 30, 22 + 6 * 26 - 13 + 26)); // lyric row, col 1
+    await tester.tapAt(
+        paint + const Offset(41 + 30, 20 + 22 + 6 * 26 - 13 + 26)); // lyric row, col 1
     expect(tappedLyricCol, 1);
-    await tester.tapAt(paint + const Offset(41 + 30, 10)); // chord row, col 1
+    await tester.tapAt(paint + const Offset(41 + 30, 30)); // chord row, col 1
     expect(tappedChordCol, 1);
   });
 
@@ -70,15 +71,15 @@ void main() {
         of: find.byType(TabStaff), matching: find.byType(CustomPaint));
     final paint = tester.getTopLeft(paintFinder.first);
 
-    // No six-string staff: height is just the chord row + lyric row.
-    expect(tester.getSize(paintFinder.first).height, 22 + 24);
+    // No six-string staff: height is just the strum row + chord row + lyric row.
+    expect(tester.getSize(paintFinder.first).height, 20 + 22 + 24);
 
-    await tester.tapAt(paint + const Offset(41, 10)); // chord row, col 0
+    await tester.tapAt(paint + const Offset(41, 30)); // chord row, col 0
     expect(tappedChordCol, 0);
 
     // Below the chord row lands straight on the lyric row — there's no
     // staff area in between to swallow the tap as a cell.
-    await tester.tapAt(paint + const Offset(41, 30));
+    await tester.tapAt(paint + const Offset(41, 50));
     expect(tappedLyricCol, 0);
     expect(tappedCol, isNull);
     expect(tappedStr, isNull);

@@ -47,8 +47,6 @@ const darkWood = WoodTone(
   seam: Color(0xFF0C0908),
 );
 
-WoodTone woodFor(bool dark) => dark ? darkWood : lightWood;
-
 const _lightScheme = ColorScheme(
   brightness: Brightness.light,
   primary: Color(0xFF4F6B4A), // sage

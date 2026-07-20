@@ -1,10 +1,16 @@
 /// Parses pasted ASCII tab (the format used across the internet) into the
-/// data model. Recognizes, per SPECS §3 notation:
+/// data model. Recognizes, per docs/ARCHITECTURE.md's notation standard:
 /// - blocks of 6 consecutive tab lines (`e|---3---|`) → one [Line]
-/// - `[Intro]` / `Verse:` style headers → section boundaries
+/// - `[Intro]` / `Verse:` style headers → section boundaries, including
+///   chords written inline on the header line itself (`[Intro] D D G A7`)
 /// - a chord-name row right above a block (`  G     Am7`) → [ChordMark]s
 /// - a plain-text row right after a block → [LyricMark]s, anchored to the
 ///   column each run of words sits over
+/// - a chord row with no tab block following (just its own lyric row, or
+///   nothing) → a chords/lyrics-only [Line] (`mode: 'chords'`, no cells),
+///   same column anchoring, just without a block to anchor against
+/// - repeat markers (`[2x]`, `(2x)`, `x2`) mixed in with chords are ignored
+///   rather than breaking chord-row recognition
 library;
 
 import 'song.dart';
@@ -22,11 +28,20 @@ List<Section> parseTab(String text) {
     sections.last.lines.add(line);
   }
 
+  /// A chord row that never found a tab block to anchor to (and isn't about
+  /// to be paired with the lyric row right after it) still becomes a
+  /// chords-only line rather than being silently dropped.
+  void flushPendingChords([String? lyricRow]) {
+    if (pendingChords == null) return;
+    addLine(_parseChordsOnly(pendingChords!, lyricRow));
+    pendingChords = null;
+  }
+
   var i = 0;
   while (i < src.length) {
     final trimmed = src[i].trim();
     if (trimmed.isEmpty) {
-      pendingChords = null;
+      flushPendingChords();
       i++;
       continue;
     }
@@ -41,7 +56,7 @@ List<Section> parseTab(String text) {
         final after = src[i].trim();
         if (after.isNotEmpty &&
             !_isTabLine(src[i]) &&
-            _sectionName(after) == null &&
+            _sectionHeader(after) == null &&
             !_isChordRow(after)) {
           lyricRow = src[i];
           i++;
@@ -51,21 +66,53 @@ List<Section> parseTab(String text) {
       pendingChords = null;
       continue;
     }
-    final name = _sectionName(trimmed);
-    if (name != null) {
-      sections.add(Section(name: name, lines: []));
-      pendingChords = null;
-    } else if (_isChordRow(trimmed)) {
+    final header = _sectionHeader(trimmed);
+    if (header != null) {
+      flushPendingChords();
+      sections.add(Section(name: header.$1, lines: []));
+      pendingChords = header.$2;
+      i++;
+      continue;
+    }
+    if (_isChordRow(trimmed)) {
+      flushPendingChords(); // an earlier pending row never got a lyric/block
       pendingChords = src[i];
-    } else {
-      pendingChords = null;
+      i++;
+      continue;
+    }
+    if (pendingChords != null) {
+      flushPendingChords(src[i]); // this plain line is its lyric row
+      i++;
+      continue;
     }
     i++;
   }
+  flushPendingChords();
   return [
     for (final s in sections)
       if (s.lines.isNotEmpty) s
   ];
+}
+
+/// Anchors a chord row (and optional lyric row) to columns by raw character
+/// position — the same idea as `_parseBlock`'s `columnAt`, just without a
+/// tab block or string-label offset to map against. `mode: 'chords'` means
+/// no six-string staff renders under it (`tab_staff.dart`), so there's no
+/// blank-strings problem to solve.
+Line _parseChordsOnly(String chordRow, String? lyricRow) {
+  var maxLen = chordRow.length;
+  if (lyricRow != null && lyricRow.length > maxLen) maxLen = lyricRow.length;
+  final line = Line(barlines: const [], length: maxLen > 0 ? maxLen : 1, mode: 'chords');
+  for (final m in RegExp(r'\S+').allMatches(chordRow)) {
+    if (_isRepeatMarker(m.group(0)!)) continue;
+    if (line.chordAt(m.start) == null) line.setChord(m.start, m.group(0)!);
+  }
+  if (lyricRow != null) {
+    for (final m in RegExp(r'\S+(?: \S+)*').allMatches(lyricRow)) {
+      if (line.lyricAt(m.start) == null) line.setLyric(m.start, m.group(0)!);
+    }
+  }
+  return line;
 }
 
 String _stripClosingPipe(String body) =>
@@ -85,21 +132,36 @@ bool _isTabLine(String raw) {
 final _chordToken =
     RegExp(r'^[A-G][#b]?(m|maj|min|dim|aug|M)?\d*(sus\d?|add\d+)?(/[A-G][#b]?)?$');
 
+/// A bracketed or bare repeat/loop marker mixed in with chords (`[2x]`,
+/// `(2x)`, `x2`) — noise around the chords, not a chord itself.
+bool _isRepeatMarker(String token) =>
+    RegExp(r'^[\[(]?\d+x[\])]?$', caseSensitive: false).hasMatch(token);
+
 bool _isChordRow(String trimmed) {
-  final tokens = trimmed.split(RegExp(r'\s+'));
+  final tokens =
+      trimmed.split(RegExp(r'\s+')).where((t) => !_isRepeatMarker(t)).toList();
   return tokens.isNotEmpty && tokens.every(_chordToken.hasMatch);
 }
 
-String? _sectionName(String trimmed) {
-  final bracketed = RegExp(r'^\[(.+)\]:?$').firstMatch(trimmed);
-  if (bracketed != null) return bracketed.group(1)!.trim();
+/// A `[Section]` header — bracketed (optionally with inline chords and/or a
+/// repeat marker trailing on the same line, e.g. `[Intro] D D G A7 [2x]`) or
+/// a bare word like `Verse 2:`. The second element of the result is the
+/// untouched inline-chords remainder (so character columns still line up
+/// for `_parseChordsOnly`), or null if there's no remainder or it doesn't
+/// look like chords.
+(String, String?)? _sectionHeader(String trimmed) {
+  final bracketed = RegExp(r'^\[([^\]]+)\](.*)$').firstMatch(trimmed);
+  if (bracketed != null) {
+    final name = bracketed.group(1)!.trim();
+    final rest = bracketed.group(2)!.replaceFirst(RegExp(r':$'), '').trim();
+    if (rest.isEmpty) return (name, null);
+    return (name, _isChordRow(rest) ? rest : null);
+  }
   final word = RegExp(
     r'^(intro|verse|chorus|bridge|solo|outro|pre-?chorus|interlude|riff)\b\s*\d*\s*:?$',
     caseSensitive: false,
   );
-  if (word.hasMatch(trimmed)) {
-    return trimmed.replaceAll(':', '').trim();
-  }
+  if (word.hasMatch(trimmed)) return (trimmed.replaceAll(':', '').trim(), null);
   return null;
 }
 

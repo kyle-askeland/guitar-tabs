@@ -10,7 +10,6 @@ void main() {
       title: 'Blackbird',
       artist: 'The Beatles',
       tuning: ['D', 'A', 'D', 'G', 'B', 'E'],
-      capo: 2,
       createdAt: '2026-07-08T00:00:00Z',
       updatedAt: '2026-07-09T00:00:00Z',
       sections: [
@@ -29,10 +28,9 @@ void main() {
     expect(jsonEncode(restored.toJson()), jsonEncode(song.toJson()));
   });
 
-  test('fromJson defaults: standard tuning, capo 0, empty sections', () {
+  test('fromJson defaults: standard tuning, empty sections', () {
     final song = Song.fromJson({'songId': 'x', 'title': 't'});
     expect(song.tuning, standardTuning);
-    expect(song.capo, 0);
     expect(song.beatsPerMeasure, 4);
     expect(song.sections, isEmpty);
     expect(song.mine, true);

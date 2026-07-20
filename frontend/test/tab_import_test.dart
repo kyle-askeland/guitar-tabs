@@ -11,7 +11,7 @@ E|-------------------|-2-------2---------|
 ''';
 
 void main() {
-  test('parses the SPECS §3 example: notes, strings, columns, barline', () {
+  test('parses the docs/ARCHITECTURE.md example: notes, strings, columns, barline', () {
     final sections = parseTab(specExample);
     expect(sections.length, 1);
     expect(sections.single.name, ''); // unnamed unless the paste had a header
@@ -95,5 +95,49 @@ E|-----|
 
   test('returns empty for text with no tab block', () {
     expect(parseTab('just some lyrics\nand more words'), isEmpty);
+  });
+
+  test('chord row with no tab block becomes a chords-only line', () {
+    const text = '''
+[Chorus]
+D G E7 D
+    Here comes the sun, doo da doo doo
+''';
+    final sections = parseTab(text);
+    expect(sections.single.name, 'Chorus');
+    final line = sections.single.lines.single;
+    expect(line.mode, 'chords');
+    expect(line.cells, isEmpty);
+    expect(line.chordAt(0), 'D');
+    expect(line.chordAt(2), 'G');
+    expect(line.lyricAt(4), 'Here comes the sun, doo da doo doo');
+  });
+
+  test('a chord row followed by another chord row still flushes standalone', () {
+    const text = '''
+[Verse]
+D G
+D G Em
+''';
+    final sections = parseTab(text);
+    expect(sections.single.lines.length, 2);
+    expect(sections.single.lines[0].chordAt(0), 'D');
+    expect(sections.single.lines[1].chordAt(0), 'D');
+  });
+
+  test('inline chords on the section header line, tolerating a repeat marker', () {
+    const text = '[Intro] D D G A7  [2x]';
+    final sections = parseTab(text);
+    expect(sections.single.name, 'Intro');
+    final line = sections.single.lines.single;
+    expect(line.mode, 'chords');
+    expect(line.chordAt(0), 'D');
+    expect([for (final c in line.chords) c.name], ['D', 'D', 'G', 'A7']);
+  });
+
+  test('bracketed header with non-chord trailing text is ignored, not treated as chords', () {
+    const text = '[Outro]  [2nd voice canon starting 1 beat later]';
+    final sections = parseTab(text);
+    expect(sections, isEmpty); // header alone, no lines — nothing to keep
   });
 }

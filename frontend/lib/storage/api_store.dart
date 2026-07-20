@@ -6,8 +6,8 @@ import '../models/song.dart';
 import 'owner_token.dart';
 import 'song_store.dart';
 
-/// Talks to the deployed API (SPECS §4). Whole-document saves,
-/// last-write-wins; the owner token rides along on every request.
+/// Talks to the deployed API (see docs/ARCHITECTURE.md). Whole-document
+/// saves, last-write-wins; the owner token rides along on every request.
 class ApiStore implements SongStore {
   final String baseUrl;
 
