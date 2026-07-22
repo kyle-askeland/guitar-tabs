@@ -88,6 +88,57 @@ void main() {
     expect(line.chordAt(8), isNull);
   });
 
+  test('insertColumn opens a blank slot, shifting later marks right', () {
+    final line = Line(
+      length: 4,
+      barlines: [2],
+      chords: [ChordMark(col: 0, name: 'G'), ChordMark(col: 2, name: 'D')],
+      lyrics: [LyricMark(col: 0, text: 'hello'), LyricMark(col: 1, text: 'world')],
+    );
+    line.insertColumn(1); // between "hello" and "world"
+    expect(line.length, 5);
+    expect(line.chordAt(0), 'G');
+    expect(line.chordAt(1), isNull); // the new blank slot
+    expect(line.chordAt(3), 'D'); // shifted from 2
+    expect(line.lyricAt(0), 'hello');
+    expect(line.lyricAt(1), isNull);
+    expect(line.lyricAt(2), 'world'); // shifted from 1
+    expect(line.barlines, [3]); // shifted from 2
+  });
+
+  test(
+      'insertColumn/removeColumn work on a line built with an immutable '
+      'barlines literal, like every chords-mode line the editor actually '
+      'creates (_chordsLineFromLyricRow, parseTab\'s chords-only lines)',
+      () {
+    // Passing `const []` used to alias the constant list straight into the
+    // field; insertColumn/removeColumn's `barlines..clear()` then threw
+    // "Unsupported operation" the moment either was called on any real
+    // chords-mode line — every one of them is built with barlines: const []
+    // (see _chordsLineFromLyricRow, _parseChordsOnly, _insertLineAbove). The
+    // constructor now defensively copies whatever list it's handed.
+    final line = Line(mode: 'chords', length: 2, barlines: const []);
+    expect(() => line.insertColumn(1), returnsNormally);
+    expect(line.length, 3);
+    expect(() => line.removeColumn(1), returnsNormally);
+    expect(line.length, 2);
+  });
+
+  test('removeColumn reclaims a blank slot but refuses an occupied one', () {
+    final line = Line(
+      length: 5,
+      chords: [ChordMark(col: 0, name: 'G'), ChordMark(col: 3, name: 'D')],
+      lyrics: [LyricMark(col: 2, text: 'world')],
+    );
+    expect(line.removeColumn(2), isFalse); // "world" lives here
+    expect(line.length, 5);
+    expect(line.removeColumn(1), isTrue); // genuinely blank
+    expect(line.length, 4);
+    expect(line.chordAt(0), 'G');
+    expect(line.lyricAt(1), 'world'); // shifted down from 2
+    expect(line.chordAt(2), 'D'); // shifted down from 3
+  });
+
   test('setCell replaces, clears, and stores frets as strings', () {
     final line = Line(length: 8);
     line.setCell(3, 2, '5');
@@ -98,10 +149,10 @@ void main() {
     expect(line.cells, isEmpty);
   });
 
-  test('defaultLineLength is 2 measures by default (fits a phone screen)', () {
-    expect(defaultLineLength(4), 16); // 2 measures * 4 beats * 2 cols
-    expect(defaultLineLength(3), 12);
-    expect(defaultLineLength(4, measures: 4), 32); // opt in to the old size
+  test('defaultLineLength is 1 measure by default (fits a phone screen)', () {
+    expect(defaultLineLength(4), 8); // 1 measure * 4 beats * 2 cols
+    expect(defaultLineLength(3), 6);
+    expect(defaultLineLength(4, measures: 2), 16); // opt in to a longer line
   });
 
   test('addMeasure appends one measure and closes off the old one', () {

@@ -19,6 +19,12 @@ class ChordChoice {
 Future<ChordChoice?> showChordDialog(
   BuildContext context, {
   String? existing,
+  /// Chords-mode lines only (docs/ARCHITECTURE.md's per-word chord grid):
+  /// room for an extra chord next to this word. Null hides the button.
+  VoidCallback? onInsertSlot,
+  /// Only offered when this column is itself an unused slot — reclaims the
+  /// space. Null hides the button.
+  VoidCallback? onRemoveSlot,
 }) {
   final parsed = existing == null ? null : splitChord(existing);
   var root = parsed?.$1 ?? 'E';
@@ -108,6 +114,22 @@ Future<ChordChoice?> showChordDialog(
         ),
         actionsOverflowButtonSpacing: 4,
         actions: [
+          if (onRemoveSlot != null)
+            TextButton(
+              onPressed: () {
+                Navigator.pop(ctx);
+                onRemoveSlot();
+              },
+              child: const Text('Remove slot'),
+            ),
+          if (onInsertSlot != null)
+            TextButton(
+              onPressed: () {
+                Navigator.pop(ctx);
+                onInsertSlot();
+              },
+              child: const Text('Add slot after'),
+            ),
           if (existing != null)
             TextButton(
               onPressed: () => Navigator.pop(ctx, const ChordChoice('')),

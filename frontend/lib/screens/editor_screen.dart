@@ -21,6 +21,34 @@ import '../widgets/wood_background.dart';
 const _connectors = 'hpbrt/\\~';
 const _maxCellLength = 8;
 
+/// Width (in columns) given to a lyric row with no words — still wide
+/// enough for a stray instrumental chord between verses, without paying for
+/// a full [defaultLineLength].
+const _blankChordLineCols = 4;
+
+/// One chords-mode line for a row of plain lyrics: a blank row becomes a
+/// short placeholder, and a populated row gets one column per word so a
+/// chord tapped above a word lands exactly on it — not on an arbitrary slot
+/// in a fixed-width grid that had no relationship to where the words fell.
+/// Shared by [_EditorScreenState._addChordsParagraph] (typed/pasted text)
+/// and [_EditorScreenState._populateFromLyrics] (lyrics.ovh lookup).
+Line _chordsLineFromLyricRow(String row) {
+  final words =
+      row.trim().split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toList();
+  if (words.isEmpty) {
+    return Line(
+        mode: 'chords', length: _blankChordLineCols, barlines: const []);
+  }
+  return Line(
+    mode: 'chords',
+    length: words.length,
+    barlines: const [],
+    lyrics: [
+      for (var i = 0; i < words.length; i++) LyricMark(col: i, text: words[i])
+    ],
+  );
+}
+
 final _noteRe = RegExp(r'^[A-Ga-g](#|b)?$');
 
 /// null = valid. Requires exactly six space-separated note names.
@@ -45,6 +73,19 @@ String? _validateBeats(String text) {
 class _Cursor {
   int section, line, col, str;
   _Cursor(this.section, this.line, this.col, this.str);
+}
+
+/// In-memory clipboard for "Copy chords" / "Paste chords": just the
+/// chord-related layers (chords, strums, and — for a tab-mode source —
+/// fretboard cells), never lyrics. Lets a chord pattern already tapped into
+/// one line be applied to other lines that already have their own lyrics,
+/// which [_EditorScreenState._duplicateLine] can't do since it always
+/// inserts a brand new line rather than merging into an existing one.
+class _ChordClipboard {
+  final List<ChordMark> chords;
+  final List<StrumMark> strums;
+  final List<Cell> cells;
+  _ChordClipboard(this.chords, this.strums, this.cells);
 }
 
 /// Result of [_EditorScreenState._startSongDialog]: either pasted text
@@ -77,6 +118,7 @@ class _EditorScreenState extends State<EditorScreen> {
   bool lookingUpLyrics = false;
   DateTime lastKey = DateTime(0);
   final focus = FocusNode();
+  _ChordClipboard? _chordClipboard;
 
   // ---- undo: a bounded stack of pre-mutation snapshots, keyed off _touch()
   // (the single funnel every edit path already runs through). See _touch().
@@ -92,34 +134,39 @@ class _EditorScreenState extends State<EditorScreen> {
   double _playZoom = 1.15; // was a hardcoded TabStaff scale
   Timer? _autoTimer;
 
+  // ---- edit view zoom (session-only): a phone screen only fits so many
+  // columns before every line needs a horizontal scroll to work in: shrinking
+  // column width buys more of the line visible at once, at the cost of size.
+  double _editZoom = 1;
+
   @override
   void initState() {
     super.initState();
     store.fetch(widget.id).then(
-      (s) => setState(() {
-        song = s;
-        final blank = s.sections.isEmpty;
-        // Existing tabs open read-only; a brand-new song has nothing to
-        // show yet, so go straight into editing it.
-        playView = !(s.mine && blank);
-        // A fresh song opens with an empty line ready to tap into. Chords
-        // mode by default: paste-lyrics-then-tap-chords is the common case
-        // (see docs/ARCHITECTURE.md); dropping into tab is the explicit
-        // "+ Tab line" action below.
-        if (s.mine && blank) {
-          s.sections.add(Section(name: '', lines: [Line(mode: 'chords')]));
-          // Offer the fast path in on top of that placeholder: look up
-          // lyrics by artist/title, or paste them — either replaces the
-          // placeholder outright (docs/ARCHITECTURE.md's "Starting a new
-          // song"), minus the library-search step that was once envisioned.
-          WidgetsBinding.instance
-              .addPostFrameCallback((_) => mounted ? _startSongDialog() : null);
-        }
-        // Baseline for the undo stack: the first _touch() diffs against this.
-        _lastSnapshot = jsonEncode(s.toJson());
-      }),
-      onError: (e) => setState(() => loadError = '$e'),
-    );
+          (s) => setState(() {
+            song = s;
+            final blank = s.sections.isEmpty;
+            // Existing tabs open read-only; a brand-new song has nothing to
+            // show yet, so go straight into editing it.
+            playView = !(s.mine && blank);
+            // A fresh song opens with an empty line ready to tap into. Chords
+            // mode by default: paste-lyrics-then-tap-chords is the common case
+            // (see docs/ARCHITECTURE.md); dropping into tab is the explicit
+            // "+ Tab line" action below.
+            if (s.mine && blank) {
+              s.sections.add(Section(name: '', lines: [Line(mode: 'chords')]));
+              // Offer the fast path in on top of that placeholder: look up
+              // lyrics by artist/title, or paste them — either replaces the
+              // placeholder outright (docs/ARCHITECTURE.md's "Starting a new
+              // song"), minus the library-search step that was once envisioned.
+              WidgetsBinding.instance.addPostFrameCallback(
+                  (_) => mounted ? _startSongDialog() : null);
+            }
+            // Baseline for the undo stack: the first _touch() diffs against this.
+            _lastSnapshot = jsonEncode(s.toJson());
+          }),
+          onError: (e) => setState(() => loadError = '$e'),
+        );
   }
 
   @override
@@ -204,8 +251,7 @@ class _EditorScreenState extends State<EditorScreen> {
 
   /// Back navigation with an unsaved-changes guard: save, discard, or stay.
   Future<void> _goBack() async {
-    void leave() =>
-        context.canPop() ? context.pop() : context.go('/');
+    void leave() => context.canPop() ? context.pop() : context.go('/');
     if (!dirty) {
       leave();
       return;
@@ -216,7 +262,8 @@ class _EditorScreenState extends State<EditorScreen> {
         title: const Text('Unsaved changes'),
         content: Text('"${song!.title}" has changes that haven\'t been saved.'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
           TextButton(
               onPressed: () => Navigator.pop(ctx, 'discard'),
               child: const Text('Discard')),
@@ -292,9 +339,24 @@ class _EditorScreenState extends State<EditorScreen> {
   }
 
   /// Tapping the chord row picks a chord and, on "Fill tab", stamps its
-  /// shape into the six strings of that column.
+  /// shape into the six strings of that column. On a chords-mode line, the
+  /// same dialog also offers "Add slot after" / "Remove slot" — a normal
+  /// tap/click that works identically on phone and desktop, rather than a
+  /// separate gesture.
   Future<void> _editChord(Line line, int col) async {
-    final choice = await showChordDialog(context, existing: line.chordAt(col));
+    final chordsMode = line.mode == 'chords';
+    final emptySlot = chordsMode &&
+        line.chordAt(col) == null &&
+        line.lyricAt(col) == null &&
+        line.strumAt(col) == null;
+    final choice = await showChordDialog(
+      context,
+      existing: line.chordAt(col),
+      onInsertSlot:
+          chordsMode ? () => _structural(() => line.insertColumn(col + 1)) : null,
+      onRemoveSlot:
+          emptySlot ? () => _structural(() => line.removeColumn(col)) : null,
+    );
     if (choice == null) return;
     line.setChord(col, choice.name);
     final frets = choice.frets;
@@ -318,13 +380,33 @@ class _EditorScreenState extends State<EditorScreen> {
     _touch();
   }
 
+  /// Tapping the lyric row edits this column's word. Splitting the text
+  /// with a space *or* a dash — "some thing", "every-thing" — inserts a
+  /// fresh column right after the previous part for each extra piece (see
+  /// [Line.insertColumn]), so a split lands immediately next to the word it
+  /// came from and everything later in the line shifts along to make room.
+  /// An earlier version tried to find or grow a slot for the extra piece
+  /// without inserting, which either overwrote a different, already-there
+  /// word or dumped the new piece off at the far end of the line — always
+  /// inserting is what makes a split land exactly where you split it.
   Future<void> _editLyric(Line line, int col) async {
-    final text =
-        await _prompt('Lyrics here', 'and so it goes…', line.lyricAt(col) ?? '');
+    final text = await _prompt('Lyrics here',
+        'and so it goes… (space or - splits into its own column)',
+        line.lyricAt(col) ?? '');
     if (text == null) return;
-    line.setLyric(col, text);
+    final words = text
+        .trim()
+        .split(RegExp(r'[\s-]+'))
+        .where((w) => w.isNotEmpty)
+        .toList();
+    line.setLyric(col, words.isEmpty ? '' : words.first);
+    for (var i = 1; i < words.length; i++) {
+      line.insertColumn(col + i);
+      line.setLyric(col + i, words[i]);
+    }
     _touch();
   }
+
 
   KeyEventResult _onKey(FocusNode node, KeyEvent event) {
     if (event is KeyUpEvent || playView) return KeyEventResult.ignored;
@@ -357,7 +439,11 @@ class _EditorScreenState extends State<EditorScreen> {
         final ch = event.character;
         if (ch == '|') {
           final bars = _line.barlines;
-          bars.contains(c.col) ? bars.remove(c.col) : (bars..add(c.col)..sort());
+          bars.contains(c.col)
+              ? bars.remove(c.col)
+              : (bars
+                ..add(c.col)
+                ..sort());
           _touch();
           return KeyEventResult.handled;
         }
@@ -380,7 +466,7 @@ class _EditorScreenState extends State<EditorScreen> {
     _touch();
   }
 
-  /// Appends a blank tab-mode line (2 measures) to a section: the fretboard,
+  /// Appends a blank tab-mode line (1 measure) to a section: the fretboard,
   /// unchanged — for a riff that needs real frets (see docs/ARCHITECTURE.md).
   void _addTabLine(int si) {
     _structural(() {
@@ -422,6 +508,46 @@ class _EditorScreenState extends State<EditorScreen> {
     });
   }
 
+  /// Copies a line's chords, strums, and (if it's a tab-mode line) fretboard
+  /// cells onto the in-memory clipboard for [_pasteChords] — never lyrics,
+  /// so the pattern can be applied to lines that already have their own.
+  void _copyChords(Line line) {
+    _chordClipboard = _ChordClipboard(
+      [for (final c in line.chords) ChordMark(col: c.col, name: c.name)],
+      [for (final s in line.strums) StrumMark(col: s.col, dir: s.dir)],
+      line.mode == 'tab'
+          ? [
+              for (final c in line.cells)
+                Cell(col: c.col, str: c.str, fret: c.fret)
+            ]
+          : const [],
+    );
+    setState(() {});
+    ScaffoldMessenger.of(context)
+        .showSnackBar(const SnackBar(content: Text('Chords copied')));
+  }
+
+  /// Overlays the copied chord/strum/cell layers onto [line], clipped to its
+  /// own length. Lyrics are never touched, so this works on a line that's
+  /// already full of lyrics — the gap [_duplicateLine] leaves.
+  void _pasteChords(Line line) {
+    final clip = _chordClipboard;
+    if (clip == null) return;
+    _structural(() {
+      line.chords
+        ..clear()
+        ..addAll(clip.chords.where((c) => c.col < line.length));
+      line.strums
+        ..clear()
+        ..addAll(clip.strums.where((s) => s.col < line.length));
+      if (clip.cells.isNotEmpty) {
+        line.cells
+          ..clear()
+          ..addAll(clip.cells.where((c) => c.col < line.length));
+      }
+    });
+  }
+
   /// Moves a line to a new position within its section.
   void _reorderLine(int si, int oldIndex, int newIndex) {
     _structural(() {
@@ -452,21 +578,19 @@ class _EditorScreenState extends State<EditorScreen> {
           ),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Add')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Add')),
         ],
       ),
     );
     if (ok != true || controller.text.isEmpty) return;
     _structural(() {
-      final length = defaultLineLength(song!.beatsPerMeasure);
       for (final row in controller.text.split('\n')) {
-        song!.sections[si].lines.add(Line(
-          mode: 'chords',
-          length: length,
-          barlines: const [],
-          lyrics: row.trim().isEmpty ? [] : [LyricMark(col: 0, text: row)],
-        ));
+        song!.sections[si].lines.add(_chordsLineFromLyricRow(row));
       }
     });
   }
@@ -508,8 +632,12 @@ class _EditorScreenState extends State<EditorScreen> {
           title: const Text('Song settings'),
           content: SingleChildScrollView(
             child: Column(mainAxisSize: MainAxisSize.min, children: [
-              TextField(controller: title, decoration: const InputDecoration(labelText: 'Title')),
-              TextField(controller: artist, decoration: const InputDecoration(labelText: 'Artist')),
+              TextField(
+                  controller: title,
+                  decoration: const InputDecoration(labelText: 'Title')),
+              TextField(
+                  controller: artist,
+                  decoration: const InputDecoration(labelText: 'Artist')),
               TextField(
                 controller: tuning,
                 onChanged: (_) => setDialogState(() {}),
@@ -561,8 +689,12 @@ class _EditorScreenState extends State<EditorScreen> {
               'measure. Continue?',
             ),
             actions: [
-              TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-              FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Continue')),
+              TextButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  child: const Text('Cancel')),
+              FilledButton(
+                  onPressed: () => Navigator.pop(ctx, true),
+                  child: const Text('Continue')),
             ],
           ),
         );
@@ -596,8 +728,12 @@ class _EditorScreenState extends State<EditorScreen> {
         title: Text('Delete "${song!.title}"?'),
         content: const Text('This is permanent.'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Delete')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Delete')),
         ],
       ),
     );
@@ -627,13 +763,18 @@ class _EditorScreenState extends State<EditorScreen> {
             autofocus: true,
             maxLines: 6,
             decoration: const InputDecoration(
-              hintText: 'Capo, practice notes, tutorial links…\nURLs become tappable.',
+              hintText:
+                  'Capo, practice notes, tutorial links…\nURLs become tappable.',
             ),
           ),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Save')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Save')),
         ],
       ),
     );
@@ -656,15 +797,8 @@ class _EditorScreenState extends State<EditorScreen> {
   /// line in front, which amounts to "starts from the beginning."
   void _populateFromLyrics(String text) {
     final s = song!;
-    final length = defaultLineLength(s.beatsPerMeasure);
     final lines = [
-      for (final row in text.split('\n'))
-        Line(
-          mode: 'chords',
-          length: length,
-          barlines: const [],
-          lyrics: row.trim().isEmpty ? [] : [LyricMark(col: 0, text: row)],
-        ),
+      for (final row in text.split('\n')) _chordsLineFromLyricRow(row),
     ];
     _structural(() {
       if (_isBlank(s)) {
@@ -792,8 +926,10 @@ class _EditorScreenState extends State<EditorScreen> {
                   if (artist.text.trim().isEmpty && title.text.trim().isEmpty) {
                     return;
                   }
-                  Navigator.pop(ctx,
-                      _LyricsEntry.lookup(artist.text.trim(), title.text.trim()));
+                  Navigator.pop(
+                      ctx,
+                      _LyricsEntry.lookup(
+                          artist.text.trim(), title.text.trim()));
                 }
               },
               child: Text(pasting ? 'Add' : 'Look up'),
@@ -848,9 +984,11 @@ class _EditorScreenState extends State<EditorScreen> {
                 onTap: _renameSong,
                 borderRadius: BorderRadius.circular(6),
                 child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
                   child: Row(mainAxisSize: MainAxisSize.min, children: [
-                    Flexible(child: Text(s.title, overflow: TextOverflow.ellipsis)),
+                    Flexible(
+                        child: Text(s.title, overflow: TextOverflow.ellipsis)),
                     const SizedBox(width: 6),
                     const Icon(Icons.edit_outlined, size: 16),
                   ]),
@@ -947,7 +1085,8 @@ class _EditorScreenState extends State<EditorScreen> {
           color: Theme.of(context).colorScheme.surface,
           borderRadius: BorderRadius.circular(10),
         ),
-        child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+        child:
+            Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
           IconButton(
             icon: Icon(_autoScrolling ? Icons.pause : Icons.play_arrow),
             tooltip: _autoScrolling ? 'Pause autoscroll' : 'Autoscroll',
@@ -964,9 +1103,8 @@ class _EditorScreenState extends State<EditorScreen> {
           ),
           _stepper(
             icon: Icons.zoom_in,
-            onMinus: _playZoom > 0.8
-                ? () => setState(() => _playZoom -= 0.1)
-                : null,
+            onMinus:
+                _playZoom > 0.8 ? () => setState(() => _playZoom -= 0.1) : null,
             onPlus:
                 _playZoom < 2.0 ? () => setState(() => _playZoom += 0.1) : null,
           ),
@@ -985,7 +1123,8 @@ class _EditorScreenState extends State<EditorScreen> {
         icon: const Icon(Icons.remove, size: 18),
         onPressed: onMinus,
       ),
-      Icon(icon, size: 18, color: Theme.of(context).colorScheme.onSurfaceVariant),
+      Icon(icon,
+          size: 18, color: Theme.of(context).colorScheme.onSurfaceVariant),
       IconButton(
         icon: const Icon(Icons.add, size: 18),
         onPressed: onPlus,
@@ -993,11 +1132,30 @@ class _EditorScreenState extends State<EditorScreen> {
     ]);
   }
 
+  /// Zoom stepper for edit view, mirroring [_playControls]'s: shrinking
+  /// column width fits more of a wide line on screen at once, so lining up
+  /// a chord over the right word doesn't require scrolling back and forth.
+  Widget _editZoomBar() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
+      child: Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+        _stepper(
+          icon: Icons.zoom_in,
+          onMinus:
+              _editZoom > 0.6 ? () => setState(() => _editZoom -= 0.1) : null,
+          onPlus:
+              _editZoom < 1.5 ? () => setState(() => _editZoom += 0.1) : null,
+        ),
+      ]),
+    );
+  }
+
   Widget _buildEditor(Song s, bool narrow) {
     return Focus(
       focusNode: focus,
       onKeyEvent: _onKey,
       child: Column(children: [
+        _editZoomBar(),
         Expanded(
           child: ListView(
             padding: const EdgeInsets.all(12),
@@ -1024,6 +1182,7 @@ class _EditorScreenState extends State<EditorScreen> {
             onNext: () => setState(() {
               if (cursor!.col < _line.length - 1) cursor!.col++;
             }),
+            onClose: () => setState(() => cursor = null),
           ),
       ]),
     );
@@ -1066,14 +1225,16 @@ class _EditorScreenState extends State<EditorScreen> {
       if (section.name.isNotEmpty)
         Padding(
           padding: const EdgeInsets.only(top: 8, bottom: 2),
-          child: Text(section.name, style: Theme.of(context).textTheme.titleSmall),
+          child:
+              Text(section.name, style: Theme.of(context).textTheme.titleSmall),
         ),
       if (section.lines.isNotEmpty)
         ReorderableListView(
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
           buildDefaultDragHandles: false,
-          onReorderItem: (oldIndex, newIndex) => _reorderLine(si, oldIndex, newIndex),
+          onReorderItem: (oldIndex, newIndex) =>
+              _reorderLine(si, oldIndex, newIndex),
           children: [
             for (var li = 0; li < section.lines.length; li++)
               _lineCard(s, si, li),
@@ -1098,92 +1259,98 @@ class _EditorScreenState extends State<EditorScreen> {
   }
 
   /// One editable line, keyed by its own identity so [ReorderableListView]
-  /// can track it across drags. The leading drag handle is the only part of
-  /// the card that starts a reorder — everything else (staff taps, the mode
-  /// chip, the menu) needs to keep working untouched.
+  /// can track it across drags. Drag handle and menu sit in a thin header
+  /// strip *above* the staff, not beside it — on a phone, competing for
+  /// horizontal room with the staff left too little width to work in. The
+  /// drag handle is the only part of the card that starts a reorder —
+  /// everything else (staff taps, the menu) needs to keep working untouched.
   Widget _lineCard(Song s, int si, int li) {
     final section = s.sections[si];
     final line = section.lines[li];
     return _card(
-      Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        ReorderableDragStartListener(
-          index: li,
-          child: Padding(
-            padding: const EdgeInsets.only(top: 4, right: 2),
+      Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(mainAxisSize: MainAxisSize.max, children: [
+          ReorderableDragStartListener(
+            index: li,
             child: Icon(Icons.drag_indicator,
+                size: 20,
                 color: Theme.of(context).colorScheme.onSurfaceVariant),
           ),
-        ),
-        Expanded(
-          child: TabStaff(
-            line: line,
-            tuning: s.tuning,
-            editable: true,
-            cursorCol: _at(si, li) ? cursor!.col : null,
-            cursorStr: _at(si, li) ? cursor!.str : null,
-            onTapCell: (col, str) {
-              setState(() => cursor = _Cursor(si, li, col, str));
-              focus.requestFocus();
-            },
-            onTapChord: (col) => _editChord(line, col),
-            onTapLyric: (col) => _editLyric(line, col),
-            onTapStrum: (col) => _cycleStrum(line, col),
-          ),
-        ),
-        _modeChip(line),
-        PopupMenuButton<String>(
-          iconSize: 18,
-          onSelected: (v) {
-            final cols = measureCols(s.beatsPerMeasure);
-            switch (v) {
-              case 'insertAbove':
-                _insertLineAbove(si, li);
-              case 'duplicate':
-                _duplicateLine(si, li);
-              case 'grow':
-                _structural(() => line.addMeasure(cols));
-              case 'shrink':
-                if (line.length > cols) {
-                  _structural(() => line.removeMeasure(cols));
-                }
-              case 'delete':
-                _structural(() {
-                  section.lines.removeAt(li);
-                  if (section.lines.isEmpty && s.sections.length > 1) {
-                    s.sections.removeAt(si);
+          const Spacer(),
+          PopupMenuButton<String>(
+            iconSize: 18,
+            onSelected: (v) {
+              final cols = measureCols(s.beatsPerMeasure);
+              switch (v) {
+                case 'toggleMode':
+                  _structural(() {
+                    line.mode = line.mode == 'tab' ? 'chords' : 'tab';
+                  });
+                case 'insertAbove':
+                  _insertLineAbove(si, li);
+                case 'duplicate':
+                  _duplicateLine(si, li);
+                case 'copyChords':
+                  _copyChords(line);
+                case 'pasteChords':
+                  _pasteChords(line);
+                case 'grow':
+                  _structural(() => line.addMeasure(cols));
+                case 'shrink':
+                  if (line.length > cols) {
+                    _structural(() => line.removeMeasure(cols));
                   }
-                });
-            }
+                case 'delete':
+                  _structural(() {
+                    section.lines.removeAt(li);
+                    if (section.lines.isEmpty && s.sections.length > 1) {
+                      s.sections.removeAt(si);
+                    }
+                  });
+              }
+            },
+            itemBuilder: (_) => [
+              PopupMenuItem(
+                value: 'toggleMode',
+                child: Text(line.mode == 'tab'
+                    ? 'Switch to chords mode'
+                    : 'Switch to tab mode'),
+              ),
+              const PopupMenuItem(
+                  value: 'insertAbove', child: Text('Insert line above')),
+              const PopupMenuItem(
+                  value: 'duplicate', child: Text('Duplicate line')),
+              const PopupMenuItem(
+                  value: 'copyChords', child: Text('Copy chords')),
+              PopupMenuItem(
+                value: 'pasteChords',
+                enabled: _chordClipboard != null,
+                child: const Text('Paste chords'),
+              ),
+              const PopupMenuItem(value: 'grow', child: Text('Add measure')),
+              const PopupMenuItem(
+                  value: 'shrink', child: Text('Remove measure')),
+              const PopupMenuItem(value: 'delete', child: Text('Delete line')),
+            ],
+          ),
+        ]),
+        TabStaff(
+          line: line,
+          tuning: s.tuning,
+          editable: true,
+          scale: _editZoom,
+          cursorCol: _at(si, li) ? cursor!.col : null,
+          cursorStr: _at(si, li) ? cursor!.str : null,
+          onTapCell: (col, str) {
+            setState(() => cursor = _Cursor(si, li, col, str));
+            focus.requestFocus();
           },
-          itemBuilder: (_) => const [
-            PopupMenuItem(value: 'insertAbove', child: Text('Insert line above')),
-            PopupMenuItem(value: 'duplicate', child: Text('Duplicate line')),
-            PopupMenuItem(value: 'grow', child: Text('Add measure')),
-            PopupMenuItem(value: 'shrink', child: Text('Remove measure')),
-            PopupMenuItem(value: 'delete', child: Text('Delete line')),
-          ],
+          onTapChord: (col) => _editChord(line, col),
+          onTapLyric: (col) => _editLyric(line, col),
+          onTapStrum: (col) => _cycleStrum(line, col),
         ),
       ]),
       key: ValueKey(line),
-    );
-  }
-
-  /// Small tappable [Tab]/[Chords] label near a line's controls — one tap
-  /// flips the line's mode (see docs/ARCHITECTURE.md).
-  Widget _modeChip(Line line) {
-    final isTab = line.mode == 'tab';
-    return Padding(
-      padding: const EdgeInsets.only(top: 4, right: 4),
-      child: ActionChip(
-        label: Text(isTab ? 'Tab' : 'Chords'),
-        labelStyle: const TextStyle(fontSize: 11),
-        visualDensity: VisualDensity.compact,
-        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        padding: const EdgeInsets.symmetric(horizontal: 4),
-        onPressed: () => _structural(() {
-          line.mode = isTab ? 'chords' : 'tab';
-        }),
-      ),
     );
   }
 

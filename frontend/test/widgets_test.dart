@@ -7,11 +7,14 @@ import 'package:guitar_tabs/widgets/tab_staff.dart';
 void main() {
   testWidgets('TabStaff paints chords/lyric/techniques and reports cell taps',
       (tester) async {
+    // Chord/lyric marks sit at col 6, well clear of the col 0/1 taps below —
+    // TabStaff now widens a column to fit its own chord/lyric text, and a
+    // wider col 0 would throw off the hand-computed col-1 offsets.
     final line = Line(length: 8, barlines: [4])
       ..setCell(0, 0, '3')
       ..setCell(2, 4, '5h7')
-      ..setChord(0, 'G')
-      ..setLyric(0, 'la la');
+      ..setChord(6, 'G')
+      ..setLyric(6, 'la la');
     int? tappedCol, tappedStr, tappedChordCol, tappedLyricCol;
     await tester.pumpWidget(MaterialApp(
       home: Scaffold(
@@ -31,14 +34,15 @@ void main() {
       ),
     ));
     final paint = tester.getTopLeft(find
-        .descendant(of: find.byType(TabStaff), matching: find.byType(CustomPaint))
+        .descendant(
+            of: find.byType(TabStaff), matching: find.byType(CustomPaint))
         .first);
     // geometry at scale 1: labelW 26, strumH 20, chordH 22, rowH 26, min col width 30
     await tester.tapAt(paint + const Offset(41, 55)); // col 0, top row = high e
     expect(tappedCol, 0);
     expect(tappedStr, 5);
-    await tester.tapAt(
-        paint + const Offset(41 + 30, 20 + 22 + 6 * 26 - 13 + 26)); // lyric row, col 1
+    await tester.tapAt(paint +
+        const Offset(41 + 30, 20 + 22 + 6 * 26 - 13 + 26)); // lyric row, col 1
     expect(tappedLyricCol, 1);
     await tester.tapAt(paint + const Offset(41 + 30, 30)); // chord row, col 1
     expect(tappedChordCol, 1);
@@ -85,7 +89,8 @@ void main() {
     expect(tappedStr, isNull);
   });
 
-  testWidgets('FretboardPad maps taps to (string, fret) across its 4-fret window',
+  testWidgets(
+      'FretboardPad maps taps to (string, fret) across its 4-fret window',
       (tester) async {
     int? str, fret;
     await tester.pumpWidget(MaterialApp(
@@ -103,16 +108,19 @@ void main() {
             onClear: () {},
             onPrev: () {},
             onNext: () {},
+            onClose: () {},
           ),
         ),
       ),
     ));
     final board = tester.getTopLeft(find.byKey(const Key('fretboard')));
     // geometry: labelW 24, openW 32, headerH 16, rowH 24
-    await tester.tapAt(board + const Offset(24 + 32 + 20, 16 + 12)); // fret 1, high e
+    await tester
+        .tapAt(board + const Offset(24 + 32 + 20, 16 + 12)); // fret 1, high e
     expect(str, 5);
     expect(fret, 1);
-    await tester.tapAt(board + const Offset(24 + 16, 16 + 5 * 24 + 12)); // open low E
+    await tester
+        .tapAt(board + const Offset(24 + 16, 16 + 5 * 24 + 12)); // open low E
     expect(str, 0);
     expect(fret, 0);
   });

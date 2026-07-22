@@ -17,6 +17,18 @@ Future<void> _pumpNewSong(WidgetTester tester, Song song) async {
   await tester.pumpAndSettle();
 }
 
+/// Opens the given line's ⋮ menu and taps whichever "Switch to ... mode"
+/// item is showing, flipping tab↔chords — the menu-based counterpart to the
+/// old always-visible mode chip.
+Future<void> _toggleLineMode(WidgetTester tester, {int index = 0}) async {
+  await tester.tap(find.byType(PopupMenuButton<String>).at(index));
+  await tester.pumpAndSettle();
+  final toTab = find.text('Switch to tab mode');
+  await tester
+      .tap(toTab.evaluate().isNotEmpty ? toTab : find.text('Switch to chords mode'));
+  await tester.pumpAndSettle();
+}
+
 void main() {
   testWidgets(
       'a brand-new song opens in edit view; the toggle switches to play view',
@@ -52,8 +64,7 @@ void main() {
 
     // A fresh line defaults to chords mode; switch it to tab to reach the
     // fret staff (see docs/ARCHITECTURE.md).
-    await tester.tap(find.text('Chords'));
-    await tester.pump();
+    await _toggleLineMode(tester);
 
     // Tap col 0 / high e on the staff, then type a fret.
     await tester.tapAt(_staff(tester) + const Offset(41, 55));
@@ -109,8 +120,7 @@ void main() {
 
     // A fresh line defaults to chords mode; switch it to tab so the lyric
     // row sits below a full six-string staff (see docs/ARCHITECTURE.md).
-    await tester.tap(find.text('Chords'));
-    await tester.pump();
+    await _toggleLineMode(tester);
 
     // lyric row (below the six strings), column 3
     await tester.tapAt(_staff(tester) + const Offset(41 + 30 * 3, 20 + 22 + 6 * 26 + 12));
@@ -121,8 +131,125 @@ void main() {
     await tester.tap(find.text('Save changes'));
     await tester.pumpAndSettle();
 
+    // One word per column starting at the tapped column, not the whole
+    // phrase glued into column 3.
     final line = (await store.fetch(song.songId)).sections.single.lines.single;
-    expect(line.lyricAt(3), 'hello darkness');
+    expect(line.lyricAt(3), 'hello');
+    expect(line.lyricAt(4), 'darkness');
+  });
+
+  testWidgets(
+      're-splitting a word inserts the new piece right next to it, pushing '
+      'later words along rather than clobbering or displacing them',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final song = await store.create('Test song');
+    await _pumpNewSong(tester, song);
+    await _toggleLineMode(tester);
+
+    Offset lyricCol(int col) => _staff(tester) +
+        Offset(41 + 30.0 * col, 20 + 22 + 6 * 26 + 12);
+
+    await tester.tapAt(lyricCol(0));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'hello darkness my old');
+    await tester.tap(find.text('OK'));
+    await tester.pumpAndSettle();
+
+    // Split the first word into two right where it is. An earlier version
+    // scanned forward "while a lyric is there" to find the edit's extent,
+    // which swallowed "darkness", "my" and "old" as if they belonged to
+    // this same edit and silently deleted them; a later version avoided
+    // deleting them but dumped "world" at the far end of the line instead
+    // of next to "hello". Splitting must insert the new piece exactly where
+    // the split happened, shifting the rest of the line along to make room.
+    await tester.tapAt(lyricCol(0));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'hello world');
+    await tester.tap(find.text('OK'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Save changes'));
+    await tester.pumpAndSettle();
+
+    final line = (await store.fetch(song.songId)).sections.single.lines.single;
+    expect(line.lyricAt(0), 'hello');
+    expect(line.lyricAt(1), 'world'); // inserted right next to "hello"
+    expect(line.lyricAt(2), 'darkness'); // shifted along, not overwritten
+    expect(line.lyricAt(3), 'my');
+    expect(line.lyricAt(4), 'old');
+  });
+
+  testWidgets('a dash in the lyric prompt splits into its own column too',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final song = await store.create('Test song');
+    await _pumpNewSong(tester, song);
+    await _toggleLineMode(tester);
+
+    final lyricCol0 = _staff(tester) + const Offset(41, 20 + 22 + 6 * 26 + 12);
+
+    await tester.tapAt(lyricCol0);
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'every-thing');
+    await tester.tap(find.text('OK'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Save changes'));
+    await tester.pumpAndSettle();
+
+    final line = (await store.fetch(song.songId)).sections.single.lines.single;
+    expect(line.lyricAt(0), 'every');
+    expect(line.lyricAt(1), 'thing');
+  });
+
+  testWidgets(
+      'the chord dialog\'s "Add slot after" / "Remove slot" buttons manage '
+      'a chords-mode line\'s columns', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final song = await store.create('Test song');
+    await _pumpNewSong(tester, song); // default first line is chords mode
+
+    Offset chordCol(int col) => _staff(tester) + Offset(41 + 30.0 * col, 30);
+
+    // Chord G at column 0, chord D at column 1.
+    await tester.tapAt(chordCol(0));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('G'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Name only'));
+    await tester.pumpAndSettle();
+    await tester.tapAt(chordCol(1));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('D'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Name only'));
+    await tester.pumpAndSettle();
+
+    // Re-open column 0 (which already has a chord) and add a slot after it.
+    // "Remove slot" must not be offered — this column isn't empty.
+    await tester.tapAt(chordCol(0));
+    await tester.pumpAndSettle();
+    expect(find.text('Remove slot'), findsNothing);
+    await tester.tap(find.text('Add slot after'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Save changes'));
+    await tester.pumpAndSettle();
+
+    var line = (await store.fetch(song.songId)).sections.single.lines.single;
+    expect(line.chordAt(0), 'G');
+    expect(line.chordAt(1), isNull); // the new blank slot
+    expect(line.chordAt(2), 'D'); // shifted right to make room
+
+    // The new blank slot at column 1 offers both buttons; remove it again.
+    await tester.tapAt(chordCol(1));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Remove slot'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Save changes'));
+    await tester.pumpAndSettle();
+
+    line = (await store.fetch(song.songId)).sections.single.lines.single;
+    expect(line.chordAt(0), 'G');
+    expect(line.chordAt(1), 'D'); // shifted back down
   });
 
   testWidgets('a brand-new song\'s first line defaults to chords mode',
@@ -131,8 +258,10 @@ void main() {
     final song = await store.create('Test song');
     await _pumpNewSong(tester, song);
 
-    expect(find.text('Chords'), findsOneWidget);
-    expect(find.text('Tab'), findsNothing);
+    await tester.tap(find.byType(PopupMenuButton<String>).first);
+    await tester.pumpAndSettle();
+    expect(find.text('Switch to tab mode'), findsOneWidget);
+    expect(find.text('Switch to chords mode'), findsNothing);
   });
 
   testWidgets('+ Tab line adds a blank tab-mode line alongside the default',
@@ -167,12 +296,15 @@ void main() {
     await tester.pumpAndSettle();
 
     // The default line the song opened with, plus the three pasted rows.
+    // Each row gets one column per word, not the whole row in one lyric mark
+    // — so a chord tapped above "two" lands on "two", not the row's start.
     final lines = (await store.fetch(song.songId)).sections.single.lines;
     expect(lines.length, 4);
     expect(lines.skip(1).every((l) => l.mode == 'chords'), isTrue);
-    expect(lines[1].lyricAt(0), 'line one');
-    expect(lines[2].lyricAt(0), 'line two');
-    expect(lines[3].lyricAt(0), 'line three');
+    Iterable<String?> words(Line l) => Iterable.generate(l.length, l.lyricAt);
+    expect(words(lines[1]), ['line', 'one']);
+    expect(words(lines[2]), ['line', 'two']);
+    expect(words(lines[3]), ['line', 'three']);
   });
 
   testWidgets('the mode chip flips a line between tab and chords, losslessly',
@@ -182,18 +314,15 @@ void main() {
     await _pumpNewSong(tester, song);
 
     // Default line is chords mode; switch to tab and stamp a fret.
-    await tester.tap(find.text('Chords'));
-    await tester.pump();
+    await _toggleLineMode(tester);
     await tester.tapAt(_staff(tester) + const Offset(41, 55));
     await tester.pump();
     await tester.sendKeyEvent(LogicalKeyboardKey.digit3);
     await tester.pump();
 
     // Flip back to chords and back to tab: the fret survives (§2, lossless).
-    await tester.tap(find.text('Tab'));
-    await tester.pump();
-    await tester.tap(find.text('Chords'));
-    await tester.pump();
+    await _toggleLineMode(tester);
+    await _toggleLineMode(tester);
     await tester.tap(find.text('Save changes'));
     await tester.pumpAndSettle();
 
@@ -291,8 +420,7 @@ void main() {
         tester.widget<IconButton>(find.widgetWithIcon(IconButton, Icons.undo));
     expect(undoButton().onPressed, isNull); // nothing to undo on a fresh song
 
-    await tester.tap(find.text('Chords'));
-    await tester.pump();
+    await _toggleLineMode(tester);
     await tester.tapAt(_staff(tester) + const Offset(41, 55));
     await tester.pump();
     await tester.sendKeyEvent(LogicalKeyboardKey.digit3);
@@ -313,8 +441,7 @@ void main() {
     final song = await store.create('Test song');
     await _pumpNewSong(tester, song);
 
-    await tester.tap(find.text('Chords'));
-    await tester.pump();
+    await _toggleLineMode(tester);
     await tester.tapAt(_staff(tester) + const Offset(41, 55));
     await tester.pump();
     await tester.sendKeyEvent(LogicalKeyboardKey.digit3);
@@ -388,8 +515,7 @@ void main() {
 
     // Give the default line a fret so the copy is easy to tell apart from a
     // freshly-added blank line.
-    await tester.tap(find.text('Chords'));
-    await tester.pump();
+    await _toggleLineMode(tester);
     await tester.tapAt(_staff(tester) + const Offset(41, 55));
     await tester.pump();
     await tester.sendKeyEvent(LogicalKeyboardKey.digit3);
@@ -421,9 +547,11 @@ void main() {
     await tester.tap(find.text('Add'));
     await tester.pumpAndSettle();
 
-    // Drag the "AAA" line's handle down past "BBB".
+    // Drag the "AAA" line's handle down past "BBB". Cards are taller now
+    // that the handle/menu sit in a header strip above the staff rather
+    // than beside it, so this needs more travel than a single card height.
     await tester.drag(
-        find.byIcon(Icons.drag_indicator).at(1), const Offset(0, 200));
+        find.byIcon(Icons.drag_indicator).at(1), const Offset(0, 400));
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('Save changes'));

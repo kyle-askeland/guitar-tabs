@@ -94,22 +94,51 @@ List<Section> parseTab(String text) {
   ];
 }
 
-/// Anchors a chord row (and optional lyric row) to columns by raw character
-/// position — the same idea as `_parseBlock`'s `columnAt`, just without a
-/// tab block or string-label offset to map against. `mode: 'chords'` means
-/// no six-string staff renders under it (`tab_staff.dart`), so there's no
-/// blank-strings problem to solve.
-Line _parseChordsOnly(String chordRow, String? lyricRow) {
-  var maxLen = chordRow.length;
-  if (lyricRow != null && lyricRow.length > maxLen) maxLen = lyricRow.length;
-  final line = Line(barlines: const [], length: maxLen > 0 ? maxLen : 1, mode: 'chords');
-  for (final m in RegExp(r'\S+').allMatches(chordRow)) {
-    if (_isRepeatMarker(m.group(0)!)) continue;
-    if (line.chordAt(m.start) == null) line.setChord(m.start, m.group(0)!);
+/// Maps the raw character offsets a chord row / lyric row's tokens start at
+/// onto compact, sequential columns — one per token instead of one per
+/// source character. A prose line is mostly whitespace, so anchoring columns
+/// to character position (the old behavior) left a chords-only line dozens
+/// of columns wide, nearly all of it empty padding between the few that
+/// actually held a chord or a word. Collapsing to "one column per token"
+/// keeps every chord over the same word it started above (both rows are
+/// mapped through the same offset→column table) while cutting the line down
+/// to only as many columns as it has content — the difference between a
+/// line that needs no horizontal scrolling on a phone and one that needs a
+/// lot of it.
+Map<int, int> _tokenColumns(String? chordRow, String? lyricRow) {
+  final offsets = <int>{};
+  if (chordRow != null) {
+    for (final m in RegExp(r'\S+').allMatches(chordRow)) {
+      if (!_isRepeatMarker(m.group(0)!)) offsets.add(m.start);
+    }
   }
   if (lyricRow != null) {
     for (final m in RegExp(r'\S+(?: \S+)*').allMatches(lyricRow)) {
-      if (line.lyricAt(m.start) == null) line.setLyric(m.start, m.group(0)!);
+      offsets.add(m.start);
+    }
+  }
+  final sorted = offsets.toList()..sort();
+  return {for (var i = 0; i < sorted.length; i++) sorted[i]: i};
+}
+
+/// Anchors a chord row (and optional lyric row) to columns — one per token
+/// (see [_tokenColumns]) rather than one per raw character, since there's no
+/// tab block here to anchor against. `mode: 'chords'` means no six-string
+/// staff renders under it (`tab_staff.dart`), so there's no blank-strings
+/// problem to solve.
+Line _parseChordsOnly(String chordRow, String? lyricRow) {
+  final colOf = _tokenColumns(chordRow, lyricRow);
+  final line = Line(
+      barlines: const [], length: colOf.isNotEmpty ? colOf.length : 1, mode: 'chords');
+  for (final m in RegExp(r'\S+').allMatches(chordRow)) {
+    if (_isRepeatMarker(m.group(0)!)) continue;
+    final col = colOf[m.start]!;
+    if (line.chordAt(col) == null) line.setChord(col, m.group(0)!);
+  }
+  if (lyricRow != null) {
+    for (final m in RegExp(r'\S+(?: \S+)*').allMatches(lyricRow)) {
+      final col = colOf[m.start]!;
+      if (line.lyricAt(col) == null) line.setLyric(col, m.group(0)!);
     }
   }
   return line;

@@ -46,7 +46,7 @@ class TabStaff extends StatelessWidget {
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       child: GestureDetector(
-        onTapDown: editable ? (d) => _tap(m, d.localPosition) : null,
+        onTapUp: editable ? (d) => _tap(m, d.localPosition) : null,
         child: CustomPaint(
           size: Size(m.width, m.height),
           painter: _StaffPainter(
@@ -107,6 +107,24 @@ class _Metrics {
       for (final w in line.columnWidths)
         math.max(30 * scale, w * charW + 12 * scale)
     ];
+    // Column width is otherwise driven by tab-cell content (character count
+    // above), which says nothing about a chord name or a lyric word sharing
+    // that column — both are proportional text, not monospace fret digits.
+    // Widen just the columns that actually hold one, so e.g. "birthday"
+    // gets the room it needs without every other, mostly-empty column
+    // paying for it too.
+    for (final ch in line.chords) {
+      if (ch.col < line.length) {
+        final w = _measure(ch.name, _chordStyle(scale, null)).width + 10 * scale;
+        if (w > colW[ch.col]) colW[ch.col] = w;
+      }
+    }
+    for (final ly in line.lyrics) {
+      if (ly.col < line.length) {
+        final w = _measure(ly.text, _lyricStyle(scale, null)).width + 8 * scale;
+        if (w > colW[ly.col]) colW[ly.col] = w;
+      }
+    }
     colX = List.filled(line.length, 0);
     var x = labelW;
     for (var c = 0; c < line.length; c++) {

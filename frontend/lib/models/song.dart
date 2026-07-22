@@ -80,11 +80,11 @@ class Line {
     List<StrumMark>? strums,
     this.length = 32,
     this.mode = 'tab',
-  })  : cells = cells ?? [],
-        barlines = barlines ?? [8, 16, 24],
-        chords = chords ?? [],
-        lyrics = lyrics ?? [],
-        strums = strums ?? [];
+  })  : cells = cells == null ? [] : List.of(cells),
+        barlines = barlines == null ? [8, 16, 24] : List.of(barlines),
+        chords = chords == null ? [] : List.of(chords),
+        lyrics = lyrics == null ? [] : List.of(lyrics),
+        strums = strums == null ? [] : List.of(strums);
 
   factory Line.fromJson(Map<String, dynamic> j) => Line(
         cells: [for (final c in j['cells'] ?? []) Cell.fromJson(c)],
@@ -212,6 +212,95 @@ class Line {
     chords.removeWhere((c) => c.col >= length);
     lyrics.removeWhere((l) => l.col >= length);
     strums.removeWhere((s) => s.col >= length);
+    return true;
+  }
+
+  /// Inserts one blank column at [col] (0..length), shifting every
+  /// cell/chord/lyric/strum/barline at or after it one column to the right.
+  /// The "add a chord slot here" action for a chords-mode line's per-word
+  /// grid (docs/ARCHITECTURE.md) — unlike [addMeasure], which always appends
+  /// a whole measure at the end, this opens room at exactly one spot, so an
+  /// extra mid-phrase chord change doesn't need a column reserved next to
+  /// every word up front.
+  void insertColumn(int col) {
+    int shift(int c) => c >= col ? c + 1 : c;
+    final newCells = [
+      for (final c in cells) Cell(col: shift(c.col), str: c.str, fret: c.fret)
+    ];
+    cells
+      ..clear()
+      ..addAll(newCells);
+    final newChords = [
+      for (final c in chords) ChordMark(col: shift(c.col), name: c.name)
+    ];
+    chords
+      ..clear()
+      ..addAll(newChords);
+    final newLyrics = [
+      for (final l in lyrics) LyricMark(col: shift(l.col), text: l.text)
+    ];
+    lyrics
+      ..clear()
+      ..addAll(newLyrics);
+    final newStrums = [
+      for (final s in strums) StrumMark(col: shift(s.col), dir: s.dir)
+    ];
+    strums
+      ..clear()
+      ..addAll(newStrums);
+    final newBarlines = [for (final b in barlines) shift(b)];
+    barlines
+      ..clear()
+      ..addAll(newBarlines);
+    length += 1;
+  }
+
+  /// Removes the blank column at [col] — the counterpart to [insertColumn].
+  /// No-ops (returns false) if that column actually holds a cell, chord,
+  /// lyric or strum (removing content, not just reclaiming empty space,
+  /// isn't this action's job — clear it first) or if it's the line's last
+  /// remaining column.
+  bool removeColumn(int col) {
+    if (length <= 1) return false;
+    if (cells.any((c) => c.col == col) ||
+        chordAt(col) != null ||
+        lyricAt(col) != null ||
+        strumAt(col) != null) {
+      return false;
+    }
+    int shift(int c) => c > col ? c - 1 : c;
+    final newCells = [
+      for (final c in cells) Cell(col: shift(c.col), str: c.str, fret: c.fret)
+    ];
+    cells
+      ..clear()
+      ..addAll(newCells);
+    final newChords = [
+      for (final c in chords) ChordMark(col: shift(c.col), name: c.name)
+    ];
+    chords
+      ..clear()
+      ..addAll(newChords);
+    final newLyrics = [
+      for (final l in lyrics) LyricMark(col: shift(l.col), text: l.text)
+    ];
+    lyrics
+      ..clear()
+      ..addAll(newLyrics);
+    final newStrums = [
+      for (final s in strums) StrumMark(col: shift(s.col), dir: s.dir)
+    ];
+    strums
+      ..clear()
+      ..addAll(newStrums);
+    final newBarlines = [
+      for (final b in barlines)
+        if (b != col) shift(b)
+    ];
+    barlines
+      ..clear()
+      ..addAll(newBarlines);
+    length -= 1;
     return true;
   }
 
@@ -371,10 +460,10 @@ List<int> defaultBarlines(int length, int beatsPerMeasure) {
   return [for (var b = cols; b < length; b += cols) b];
 }
 
-/// Default length (in columns) of a freshly added line. Two measures by
-/// default — enough to feel like a real line without needing a horizontal
-/// scroll on a phone screen; "Add measure" grows it from there.
-int defaultLineLength(int beatsPerMeasure, {int measures = 2}) =>
+/// Default length (in columns) of a freshly added line. One measure by
+/// default, since even that alone can run past a phone's width once fret
+/// numbers widen columns; "Add measure" grows it from there.
+int defaultLineLength(int beatsPerMeasure, {int measures = 1}) =>
     measureCols(beatsPerMeasure) * measures;
 
 /// List-view projection: what `GET /songs` returns (no tab data).

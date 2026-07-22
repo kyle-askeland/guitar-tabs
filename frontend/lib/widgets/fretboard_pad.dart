@@ -16,7 +16,7 @@ class FretboardPad extends StatefulWidget {
   final List<String> tuning;
   final void Function(int str, int fret) onFret;
   final void Function(String symbol) onSymbol;
-  final VoidCallback onClear, onPrev, onNext;
+  final VoidCallback onClear, onPrev, onNext, onClose;
 
   const FretboardPad({
     super.key,
@@ -27,6 +27,7 @@ class FretboardPad extends StatefulWidget {
     required this.onClear,
     required this.onPrev,
     required this.onNext,
+    required this.onClose,
   });
 
   @override
@@ -58,78 +59,106 @@ class _FretboardPadState extends State<FretboardPad> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return Material(
-      elevation: 8,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(8, 6, 8, 8),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            SizedBox(
-              height: 32,
-              child: ListView(
-                scrollDirection: Axis.horizontal,
-                children: [
-                  for (final p in _positions)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 2),
-                      child: OutlinedButton(
-                        onPressed: () => setState(() => start = p),
-                        style: OutlinedButton.styleFrom(
-                          visualDensity: VisualDensity.compact,
-                          padding: const EdgeInsets.symmetric(horizontal: 10),
-                          backgroundColor:
-                              start == p ? scheme.primaryContainer : null,
-                        ),
-                        child: Text('$p–${p + _window - 1}'),
-                      ),
+    return GestureDetector(
+      // Swipe down anywhere on the pad to dismiss it, mirroring the close
+      // button — a phone user's thumb is already down here, not up at a
+      // corner "X".
+      onVerticalDragEnd: (d) {
+        if ((d.primaryVelocity ?? 0) > 200) widget.onClose();
+      },
+      child: Material(
+        elevation: 8,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(8, 6, 8, 8),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(children: [
+                Expanded(
+                  child: SizedBox(
+                    height: 32,
+                    child: ListView(
+                      scrollDirection: Axis.horizontal,
+                      children: [
+                        for (final p in _positions)
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 2),
+                            child: OutlinedButton(
+                              onPressed: () => setState(() => start = p),
+                              style: OutlinedButton.styleFrom(
+                                visualDensity: VisualDensity.compact,
+                                padding:
+                                    const EdgeInsets.symmetric(horizontal: 10),
+                                backgroundColor:
+                                    start == p ? scheme.primaryContainer : null,
+                              ),
+                              child: Text('$p–${p + _window - 1}'),
+                            ),
+                          ),
+                      ],
                     ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 4),
-            LayoutBuilder(builder: (context, constraints) {
-              final size =
-                  Size(constraints.maxWidth, _headerH + 6 * _rowH);
-              return GestureDetector(
-                onTapDown: (d) => _tap(d.localPosition, size.width),
-                child: CustomPaint(
-                  key: const Key('fretboard'),
-                  size: size,
-                  painter: _BoardPainter(
-                    frets: _frets,
-                    tuning: widget.tuning,
-                    start: start,
-                    ink: scheme.onSurface,
-                    muted: scheme.onSurfaceVariant,
-                    accent: scheme.primary,
-                    onAccent: scheme.onPrimary,
-                    faint: scheme.surfaceContainerHighest,
                   ),
                 ),
-              );
-            }),
-            const SizedBox(height: 4),
-            Row(children: [
-              _key(context, '←', widget.onPrev),
-              _key(context, '→', widget.onNext),
-              const SizedBox(width: 6),
-              Expanded(
-                child: SizedBox(
-                  height: 36,
-                  child: ListView(
-                    scrollDirection: Axis.horizontal,
-                    children: [
-                      for (final sym in ['h', 'p', 'b', 'r', '/', r'\', '~', 'x', '|'])
-                        _key(context, sym, () => widget.onSymbol(sym)),
-                    ],
+                IconButton(
+                  icon: const Icon(Icons.keyboard_hide_outlined),
+                  tooltip: 'Close fretboard',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: widget.onClose,
+                ),
+              ]),
+              const SizedBox(height: 4),
+              LayoutBuilder(builder: (context, constraints) {
+                final size = Size(constraints.maxWidth, _headerH + 6 * _rowH);
+                return GestureDetector(
+                  onTapDown: (d) => _tap(d.localPosition, size.width),
+                  child: CustomPaint(
+                    key: const Key('fretboard'),
+                    size: size,
+                    painter: _BoardPainter(
+                      frets: _frets,
+                      tuning: widget.tuning,
+                      start: start,
+                      ink: scheme.onSurface,
+                      muted: scheme.onSurfaceVariant,
+                      accent: scheme.primary,
+                      onAccent: scheme.onPrimary,
+                      faint: scheme.surfaceContainerHighest,
+                    ),
+                  ),
+                );
+              }),
+              const SizedBox(height: 4),
+              Row(children: [
+                _key(context, '←', widget.onPrev),
+                _key(context, '→', widget.onNext),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: SizedBox(
+                    height: 36,
+                    child: ListView(
+                      scrollDirection: Axis.horizontal,
+                      children: [
+                        for (final sym in [
+                          'h',
+                          'p',
+                          'b',
+                          'r',
+                          '/',
+                          r'\',
+                          '~',
+                          'x',
+                          '|'
+                        ])
+                          _key(context, sym, () => widget.onSymbol(sym)),
+                      ],
+                    ),
                   ),
                 ),
-              ),
-              const SizedBox(width: 6),
-              _key(context, '⌫', widget.onClear),
-            ]),
-          ],
+                const SizedBox(width: 6),
+                _key(context, '⌫', widget.onClear),
+              ]),
+            ],
+          ),
         ),
       ),
     );
@@ -157,7 +186,8 @@ class _FretboardPadState extends State<FretboardPad> {
       widget.onFret(str, 0);
     } else {
       final fretW = (width - _labelW - _openW) / _window;
-      final i = ((pos.dx - _labelW - _openW) / fretW).floor().clamp(0, _window - 1);
+      final i =
+          ((pos.dx - _labelW - _openW) / fretW).floor().clamp(0, _window - 1);
       widget.onFret(str, start + i);
     }
   }
@@ -189,14 +219,14 @@ class _BoardPainter extends CustomPainter {
     const top = _headerH + _rowH / 2;
     const bottom = _headerH + 5 * _rowH + _rowH / 2;
     double sy(int row) => _headerH + row * _rowH + _rowH / 2;
-    double fx(int i) => boardL + i * fretW + fretW / 2; // center of window fret i
+    double fx(int i) =>
+        boardL + i * fretW + fretW / 2; // center of window fret i
 
-    final numStyle = TextStyle(
-        fontFamily: 'monospace', fontSize: 10.5, color: muted);
+    final numStyle =
+        TextStyle(fontFamily: 'monospace', fontSize: 10.5, color: muted);
     void text(String s, TextStyle st, Offset center) {
       final tp = TextPainter(
-          text: TextSpan(text: s, style: st),
-          textDirection: TextDirection.ltr)
+          text: TextSpan(text: s, style: st), textDirection: TextDirection.ltr)
         ..layout();
       tp.paint(canvas, center - Offset(tp.width / 2, tp.height / 2));
     }
@@ -224,7 +254,8 @@ class _BoardPainter extends CustomPainter {
     final nutPaint = Paint()
       ..color = ink.withValues(alpha: .8)
       ..strokeWidth = start == 1 ? 3.5 : 1.5;
-    canvas.drawLine(const Offset(boardL, top), const Offset(boardL, bottom), nutPaint);
+    canvas.drawLine(
+        const Offset(boardL, top), const Offset(boardL, bottom), nutPaint);
     final wirePaint = Paint()
       ..color = muted.withValues(alpha: .45)
       ..strokeWidth = 1.2;
@@ -234,8 +265,8 @@ class _BoardPainter extends CustomPainter {
     }
 
     // strings (thicker toward low E) and labels
-    final labelStyle = TextStyle(
-        fontFamily: 'monospace', fontSize: 11, color: muted);
+    final labelStyle =
+        TextStyle(fontFamily: 'monospace', fontSize: 11, color: muted);
     for (var row = 0; row < 6; row++) {
       final str = 5 - row;
       canvas.drawLine(

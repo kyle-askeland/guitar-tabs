@@ -108,9 +108,18 @@ D G E7 D
     final line = sections.single.lines.single;
     expect(line.mode, 'chords');
     expect(line.cells, isEmpty);
+    // Columns are compacted to one per token (chord or lyric run), not one
+    // per raw character: the four chords and the one lyric run (it's all
+    // single-spaced, so it's a single run) sort to 5 distinct offsets
+    // (0, 2, 4, 7 for the chords — E7 shares offset 4 with the lyric run —
+    // giving columns 0-3), keeping the line only 4 columns wide instead of
+    // 39.
+    expect(line.length, 4);
     expect(line.chordAt(0), 'D');
-    expect(line.chordAt(2), 'G');
-    expect(line.lyricAt(4), 'Here comes the sun, doo da doo doo');
+    expect(line.chordAt(1), 'G');
+    expect(line.chordAt(2), 'E7');
+    expect(line.chordAt(3), 'D');
+    expect(line.lyricAt(2), 'Here comes the sun, doo da doo doo');
   });
 
   test('a chord row followed by another chord row still flushes standalone', () {
