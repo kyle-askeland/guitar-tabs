@@ -339,10 +339,10 @@ class _EditorScreenState extends State<EditorScreen> {
   }
 
   /// Tapping the chord row picks a chord and, on "Fill tab", stamps its
-  /// shape into the six strings of that column. On a chords-mode line, an
-  /// already-empty slot also offers "Remove slot" to reclaim it — adding a
-  /// slot has its own dedicated "+" button on the staff (see
-  /// [_insertSlotAt]), rather than living here too.
+  /// shape into the six strings of that column. On a chords-mode line, the
+  /// same dialog also offers "Add slot after" / "Remove slot" — a normal
+  /// tap/click that works identically on phone and desktop, rather than a
+  /// separate gesture.
   Future<void> _editChord(Line line, int col) async {
     final chordsMode = line.mode == 'chords';
     final emptySlot = chordsMode &&
@@ -352,6 +352,8 @@ class _EditorScreenState extends State<EditorScreen> {
     final choice = await showChordDialog(
       context,
       existing: line.chordAt(col),
+      onInsertSlot:
+          chordsMode ? () => _structural(() => line.insertColumn(col + 1)) : null,
       onRemoveSlot:
           emptySlot ? () => _structural(() => line.removeColumn(col)) : null,
     );
@@ -369,21 +371,17 @@ class _EditorScreenState extends State<EditorScreen> {
     _touch();
   }
 
-  /// The chords-mode "+" button: inserts a blank slot at [col] and
-  /// immediately opens the chord picker for it, so the button both makes
-  /// room and lets you fill it in a single tap rather than a bare insert
-  /// you then have to tap again to use.
-  void _insertSlotAt(Line line, int col) {
+  /// The per-line menu's "Add chord": appends one blank slot to the end of
+  /// this line — room for one more chord past whatever's already there —
+  /// and opens the chord picker for it directly. Works on tab-mode lines
+  /// too, off the beat grid if need be: flexibility while building a song
+  /// matters more here than keeping every line a clean multiple of
+  /// [measureCols].
+  void _appendChordSlot(int si, int li) {
+    final line = song!.sections[si].lines[li];
+    final col = line.length;
     _structural(() => line.insertColumn(col));
     _editChord(line, col);
-  }
-
-  /// The tab-mode "+" button: inserts a whole blank measure at [col] (an
-  /// existing barline, 0, or the line's length) — see [Line.insertMeasure]
-  /// for why tab mode only ever inserts whole measures, never single slots.
-  void _insertMeasureAt(Line line, int col) {
-    _structural(
-        () => line.insertMeasure(col, measureCols(song!.beatsPerMeasure)));
   }
 
   /// Tapping the strum row cycles none -> down -> up -> none — quick enough
@@ -1303,6 +1301,8 @@ class _EditorScreenState extends State<EditorScreen> {
                   });
                 case 'insertAbove':
                   _insertLineAbove(si, li);
+                case 'addChord':
+                  _appendChordSlot(si, li);
                 case 'duplicate':
                   _duplicateLine(si, li);
                 case 'copyChords':
@@ -1333,6 +1333,7 @@ class _EditorScreenState extends State<EditorScreen> {
               ),
               const PopupMenuItem(
                   value: 'insertAbove', child: Text('Insert line above')),
+              const PopupMenuItem(value: 'addChord', child: Text('Add chord')),
               const PopupMenuItem(
                   value: 'duplicate', child: Text('Duplicate line')),
               const PopupMenuItem(
@@ -1363,8 +1364,6 @@ class _EditorScreenState extends State<EditorScreen> {
           onTapChord: (col) => _editChord(line, col),
           onTapLyric: (col) => _editLyric(line, col),
           onTapStrum: (col) => _cycleStrum(line, col),
-          onInsertMeasure: (col) => _insertMeasureAt(line, col),
-          onInsertSlot: (col) => _insertSlotAt(line, col),
         ),
       ]),
       key: ValueKey(line),

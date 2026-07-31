@@ -304,25 +304,6 @@ class Line {
     return true;
   }
 
-  /// Inserts a full blank measure ([cols] columns) at [atCol] — the
-  /// tab-mode counterpart to [insertColumn]'s single-slot insert used by
-  /// chords-mode lines. Only ever inserts whole measures, and only at an
-  /// existing barline (or 0, or [length]), so every column downstream keeps
-  /// its (measure, offset) pair on the beat grid intact — an arbitrary
-  /// single-column insert would desync barlines from `measureCols`
-  /// (docs/ARCHITECTURE.md), unlike on a chords-mode line, which has no
-  /// grid to desync.
-  void insertMeasure(int atCol, int cols) {
-    for (var i = 0; i < cols; i++) {
-      insertColumn(atCol);
-    }
-    if (atCol > 0 && !barlines.contains(atCol)) {
-      barlines
-        ..add(atCol)
-        ..sort();
-    }
-  }
-
   /// How many cells/chords/lyrics would be discarded by [remeasure] moving
   /// from [oldBeats] to [newBeats] beats per measure — content only fails to
   /// carry over when the measure grid *shrinks* and a mark lands past the
