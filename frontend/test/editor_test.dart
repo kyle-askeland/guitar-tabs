@@ -202,7 +202,7 @@ void main() {
   });
 
   testWidgets(
-      'the chord dialog\'s "Add slot after" / "Remove slot" buttons manage '
+      'the inline "+" button and the chord dialog\'s "Remove slot" manage '
       'a chords-mode line\'s columns', (tester) async {
     SharedPreferences.setMockInitialValues({});
     final song = await store.create('Test song');
@@ -224,12 +224,18 @@ void main() {
     await tester.tap(find.text('Name only'));
     await tester.pumpAndSettle();
 
-    // Re-open column 0 (which already has a chord) and add a slot after it.
-    // "Remove slot" must not be offered — this column isn't empty.
-    await tester.tapAt(chordCol(0));
+    // Tap the inline "+" sitting between column 0 and column 1 — it should
+    // insert a blank slot there and open the chord picker for it directly;
+    // dismiss without picking anything to leave the slot blank. (Tapping
+    // the icon itself rather than the wrapping Tooltip — the Tooltip's own
+    // render object doesn't hit-test where getCenter() puts it.)
+    final insertButtons = find.descendant(
+        of: find.byType(TabStaff), matching: find.byIcon(Icons.add));
+    expect(insertButtons, findsNWidgets(3)); // before, between, after 2 words
+    await tester.tap(insertButtons.at(1));
     await tester.pumpAndSettle();
-    expect(find.text('Remove slot'), findsNothing);
-    await tester.tap(find.text('Add slot after'));
+    expect(find.text('Chord'), findsOneWidget); // the picker opened for it
+    await tester.tap(find.text('Cancel'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Save changes'));
     await tester.pumpAndSettle();
@@ -239,7 +245,7 @@ void main() {
     expect(line.chordAt(1), isNull); // the new blank slot
     expect(line.chordAt(2), 'D'); // shifted right to make room
 
-    // The new blank slot at column 1 offers both buttons; remove it again.
+    // The new blank slot at column 1 offers "Remove slot"; remove it again.
     await tester.tapAt(chordCol(1));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Remove slot'));
@@ -250,6 +256,42 @@ void main() {
     line = (await store.fetch(song.songId)).sections.single.lines.single;
     expect(line.chordAt(0), 'G');
     expect(line.chordAt(1), 'D'); // shifted back down
+  });
+
+  testWidgets('the tab-mode "+" button inserts a whole measure at a barline',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final song = await store.create('Test song');
+    await _pumpNewSong(tester, song);
+
+    // chords -> tab; the default line already carries 4/4's default
+    // barlines ([8, 16, 24] over a 32-column line).
+    await _toggleLineMode(tester);
+
+    // A note in measure 1 (col 2) and measure 2 (col 10).
+    await tester.tapAt(_staff(tester) + const Offset(101, 55));
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.digit1);
+    await tester.pump();
+    await tester.tapAt(_staff(tester) + const Offset(341, 55));
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.digit2);
+    await tester.pump();
+
+    final insertButtons = find.descendant(
+        of: find.byType(TabStaff), matching: find.byIcon(Icons.add));
+    expect(insertButtons, findsNWidgets(5)); // start + 3 barlines + end
+    await tester.tap(insertButtons.at(1)); // the barline at column 8
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Save changes'));
+    await tester.pumpAndSettle();
+
+    final line = (await store.fetch(song.songId)).sections.single.lines.single;
+    expect(line.length, 40);
+    expect(line.barlines, [8, 16, 24, 32]);
+    expect(line.cellAt(2, 5)!.fret, '1'); // untouched
+    expect(line.cellAt(10, 5), isNull); // its measure shifted away
+    expect(line.cellAt(18, 5)!.fret, '2'); // shifted right by one measure
   });
 
   testWidgets('a brand-new song\'s first line defaults to chords mode',

@@ -13,7 +13,11 @@ const tabTextStyle = TextStyle(fontFamily: 'monospace', fontSize: 15, height: 1.
 /// columns, so a chord and the words sung under it line up with their notes.
 ///
 /// Painted as a single CustomPaint with tap hit-testing — far cheaper than
-/// 6×N GestureDetectors, and every column is a full-height tap target.
+/// 6×N GestureDetectors, and every column is a full-height tap target. The
+/// "insert room" buttons (see [_Metrics.insertPoints]) are the one part
+/// that's real Material widgets over the canvas rather than painted-and-
+/// hit-tested: they're small, sparse targets, and a ripple + `+` glyph is
+/// unambiguous where hand-rolled hit math for a hairline gap would not be.
 class TabStaff extends StatelessWidget {
   final Line line;
   final List<String> tuning;
@@ -24,6 +28,11 @@ class TabStaff extends StatelessWidget {
   final void Function(int col)? onTapChord;
   final void Function(int col)? onTapLyric;
   final void Function(int col)? onTapStrum;
+  /// Tab mode only: inserts a whole blank measure at column [atCol] (an
+  /// existing barline, 0, or the line's length).
+  final void Function(int atCol)? onInsertMeasure;
+  /// Chords mode only: inserts a single blank column at [atCol].
+  final void Function(int atCol)? onInsertSlot;
 
   const TabStaff({
     super.key,
@@ -37,6 +46,8 @@ class TabStaff extends StatelessWidget {
     this.onTapChord,
     this.onTapLyric,
     this.onTapStrum,
+    this.onInsertMeasure,
+    this.onInsertSlot,
   });
 
   @override
@@ -45,21 +56,64 @@ class TabStaff extends StatelessWidget {
     final m = _Metrics(line, scale, editable);
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
-      child: GestureDetector(
-        onTapUp: editable ? (d) => _tap(m, d.localPosition) : null,
-        child: CustomPaint(
-          size: Size(m.width, m.height),
-          painter: _StaffPainter(
-            line: line,
-            tuning: tuning,
-            m: m,
-            cursorCol: cursorCol,
-            cursorStr: cursorStr,
-            editable: editable,
-            ink: theme.colorScheme.onSurface,
-            muted: theme.colorScheme.onSurfaceVariant,
-            accent: theme.colorScheme.primary,
-            bg: theme.colorScheme.surface,
+      child: SizedBox(
+        width: m.width,
+        height: m.height,
+        child: Stack(clipBehavior: Clip.none, children: [
+          GestureDetector(
+            onTapUp: editable ? (d) => _tap(m, d.localPosition) : null,
+            child: CustomPaint(
+              size: Size(m.width, m.height),
+              painter: _StaffPainter(
+                line: line,
+                tuning: tuning,
+                m: m,
+                cursorCol: cursorCol,
+                cursorStr: cursorStr,
+                editable: editable,
+                ink: theme.colorScheme.onSurface,
+                muted: theme.colorScheme.onSurfaceVariant,
+                accent: theme.colorScheme.primary,
+                bg: theme.colorScheme.surface,
+              ),
+            ),
+          ),
+          for (final p in m.insertPoints) _insertButton(context, m, p),
+        ]),
+      ),
+    );
+  }
+
+  /// Tucked into the bottom of the row it belongs to — the chord row in tab
+  /// mode (right above the barline it inserts at), the lyric row in chords
+  /// mode — rather than reserving its own strip of layout height. That
+  /// keeps every existing row (and every column/chord/lyric tap target
+  /// within it) at exactly the same pixel position as a line with no insert
+  /// buttons at all, and — unlike straddling the seam — never overflows
+  /// past the staff's own bounds into whatever's laid out right after it
+  /// (the "+ Tab line" row on a single-line song, the next line's card...).
+  Widget _insertButton(BuildContext context, _Metrics m, _InsertPoint p) {
+    final chordsMode = line.mode == 'chords';
+    final bandBottom = chordsMode ? m.height : m.strumH + m.chordH;
+    final size = 20 * m.scale;
+    final accent = Theme.of(context).colorScheme.primary;
+    return Positioned(
+      left: p.x - size / 2,
+      top: bandBottom - size,
+      width: size,
+      height: size,
+      child: Tooltip(
+        message:
+            chordsMode ? 'Add a chord/word slot here' : 'Insert a measure here',
+        child: Material(
+          color: accent.withValues(alpha: .12),
+          shape: const CircleBorder(),
+          child: InkWell(
+            customBorder: const CircleBorder(),
+            onTap: () => chordsMode
+                ? onInsertSlot?.call(p.col)
+                : onInsertMeasure?.call(p.col),
+            child: Icon(Icons.add, size: size * .7, color: accent),
           ),
         ),
       ),
@@ -72,14 +126,18 @@ class TabStaff extends StatelessWidget {
       onTapStrum?.call(col);
     } else if (pos.dy < m.strumH + m.chordH) {
       onTapChord?.call(col);
-    } else if (pos.dy < m.strumH + m.chordH + m.staffH) {
-      final row = ((pos.dy - m.strumH - m.chordH) / m.rowH).floor().clamp(0, 5);
+    } else if (pos.dy < m.staffTop + m.staffH) {
+      final row = ((pos.dy - m.staffTop) / m.rowH).floor().clamp(0, 5);
       onTapCell?.call(col, 5 - row); // top row = high e = str 5
     } else {
       onTapLyric?.call(col);
     }
   }
 }
+
+/// One "add room here" button: [col] is the index to insert at ([Line]'s
+/// `insertColumn`/`insertMeasure`), [x] is where to center it.
+typedef _InsertPoint = ({int col, double x});
 
 class _Metrics {
   final Line line;
@@ -96,6 +154,11 @@ class _Metrics {
   late final List<double> colX; // absolute start x of each column
   late final double width;
   late final double height;
+  /// Where "insert room" buttons go: one per barline (plus the line's
+  /// start and end) in tab mode, since only whole measures keep the beat
+  /// grid intact; one per column boundary in chords mode, since each
+  /// column is just a word/chord slot with no grid to preserve.
+  late final List<_InsertPoint> insertPoints;
 
   _Metrics(this.line, this.scale, bool editable) {
     staffH = line.mode == 'chords' ? 0 : 6 * rowH;
@@ -147,11 +210,39 @@ class _Metrics {
     }
     width = math.max(x, text + 6 * scale) + 2;
     height = strumH + chordH + staffH + lyricH;
+
+    // A column boundary only gets a "+" in chords mode if it's next to an
+    // actual chord/lyric — a blank line (e.g. the 32-column placeholder a
+    // brand-new song starts with) already has plenty of bare, directly
+    // tappable columns and doesn't need a way to make more of them; the
+    // point of this button is squeezing one more slot into a line that's
+    // already full of words.
+    bool hasContent(int c) =>
+        c >= 0 && c < line.length && (line.chordAt(c) != null || line.lyricAt(c) != null);
+    insertPoints = !editable
+        ? const []
+        : line.mode == 'chords'
+            ? [
+                for (var c = 0; c <= line.length; c++)
+                  if (hasContent(c - 1) || hasContent(c))
+                    (col: c, x: c < line.length ? colX[c] : staffEnd),
+              ]
+            : [
+                (col: 0, x: labelW),
+                for (final b in line.barlines)
+                  if (b > 0 && b < line.length) (col: b, x: colX[b]),
+                (col: line.length, x: staffEnd),
+              ];
   }
 
   /// x of the staff's right edge — where the closing barline is drawn. Not
   /// [width], which may be padded out by a long chord or lyric.
   double get staffEnd => colX.isEmpty ? labelW : colX.last + colW.last;
+
+  /// Top of the six-string staff.
+  double get staffTop => strumH + chordH;
+
+  double get lyricTop => staffTop + staffH;
 
   int colAt(double x) {
     for (var c = 0; c < line.length; c++) {
@@ -210,7 +301,7 @@ class _StaffPainter extends CustomPainter {
     required this.bg,
   });
 
-  double _sy(int row) => m.strumH + m.chordH + row * m.rowH + m.rowH / 2;
+  double _sy(int row) => m.staffTop + row * m.rowH + m.rowH / 2;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -232,7 +323,7 @@ class _StaffPainter extends CustomPainter {
     final col = cursorCol;
     if (col == null || col >= line.length || m.staffH == 0) return;
     canvas.drawRect(
-      Rect.fromLTWH(m.colX[col], m.strumH + m.chordH, m.colW[col], m.staffH),
+      Rect.fromLTWH(m.colX[col], m.staffTop, m.colW[col], m.staffH),
       Paint()..color = accent.withValues(alpha: .12),
     );
     final str = cursorStr;
@@ -273,7 +364,7 @@ class _StaffPainter extends CustomPainter {
       TextStyle(
           fontStyle: FontStyle.italic, fontSize: 12 * m.scale, color: muted),
     );
-    final pos = Offset(m.labelW + 12 * m.scale, m.chordH + 3 * m.rowH - tp.height / 2);
+    final pos = Offset(m.labelW + 12 * m.scale, m.staffTop + 3 * m.rowH - tp.height / 2);
     canvas.drawRect(
       Rect.fromLTWH(pos.dx - 4, pos.dy, tp.width + 8, tp.height),
       Paint()..color = bg,
@@ -442,9 +533,8 @@ class _StaffPainter extends CustomPainter {
 
   void _paintLyrics(Canvas canvas) {
     if (m.lyricH == 0) return;
-    final top = m.strumH + m.chordH + m.staffH;
     final row =
-        Rect.fromLTWH(m.labelW, top + 3, m.width - m.labelW - 2, m.lyricH - 6);
+        Rect.fromLTWH(m.labelW, m.lyricTop + 3, m.width - m.labelW - 2, m.lyricH - 6);
     if (editable) _bubble(canvas, row);
     if (line.lyrics.isEmpty) {
       if (!editable) return;
