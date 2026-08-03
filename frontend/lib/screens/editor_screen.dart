@@ -540,23 +540,32 @@ class _EditorScreenState extends State<EditorScreen> {
         .showSnackBar(const SnackBar(content: Text('Chords copied')));
   }
 
-  /// Overlays the copied chord/strum/cell layers onto [line], clipped to its
-  /// own length. Lyrics are never touched, so this works on a line that's
-  /// already full of lyrics — the gap [_duplicateLine] leaves.
+  /// Overlays the copied chord/strum/cell layers onto [line], growing it if
+  /// the copied pattern reaches further than this line already does (e.g.
+  /// the source had an extra "Add chord" slot tacked onto the end) so
+  /// nothing gets silently dropped. Lyrics are never touched, so this works
+  /// on a line that's already full of lyrics — the gap [_duplicateLine]
+  /// leaves.
   void _pasteChords(Line line) {
     final clip = _chordClipboard;
     if (clip == null) return;
     _structural(() {
+      final maxCol = [
+        for (final c in clip.chords) c.col,
+        for (final s in clip.strums) s.col,
+        for (final c in clip.cells) c.col,
+      ].fold(-1, (m, c) => c > m ? c : m);
+      if (maxCol >= line.length) line.length = maxCol + 1;
       line.chords
         ..clear()
-        ..addAll(clip.chords.where((c) => c.col < line.length));
+        ..addAll(clip.chords);
       line.strums
         ..clear()
-        ..addAll(clip.strums.where((s) => s.col < line.length));
+        ..addAll(clip.strums);
       if (clip.cells.isNotEmpty) {
         line.cells
           ..clear()
-          ..addAll(clip.cells.where((c) => c.col < line.length));
+          ..addAll(clip.cells);
       }
     });
   }

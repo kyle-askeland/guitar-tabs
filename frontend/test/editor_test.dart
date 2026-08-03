@@ -602,6 +602,69 @@ void main() {
     expect(lines[1].cellAt(0, 5)!.fret, '3');
   });
 
+  testWidgets(
+      'Paste chords carries over a slot added past the target line\'s '
+      'original length, instead of dropping it', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final song = await store.create('Test song');
+    await _pumpNewSong(tester, song); // default first line is chords mode
+
+    Offset chordCol(int col) => _staff(tester) + Offset(41 + 30.0 * col, 30);
+
+    // A chord at column 0, then "Add chord" appends one more slot past the
+    // line's original length (32) — this is the part that used to get
+    // silently dropped on paste.
+    await tester.tapAt(chordCol(0));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('G'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Name only'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byType(PopupMenuButton<String>).at(0));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Add chord'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('D'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Name only'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byType(PopupMenuButton<String>).at(0));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Copy chords'));
+    await tester.pumpAndSettle();
+    // pumpAndSettle() only waits for scheduled frames, not the SnackBar's
+    // dismissal Timer — without this it's still covering the bottom of the
+    // screen (including the Save button) several steps from now.
+    await tester.pump(const Duration(seconds: 5));
+    await tester.pumpAndSettle();
+
+    // A second, shorter chords-mode line (the default 4-column blank one)
+    // to paste onto, appended below via "+ Chords paragraph".
+    await tester.tap(find.text('Chords paragraph'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), ' ');
+    await tester.tap(find.text('Add'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byType(PopupMenuButton<String>).at(1));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Paste chords'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Save changes'));
+    await tester.pumpAndSettle();
+
+    final lines = (await store.fetch(song.songId)).sections.single.lines;
+    final source = lines[0];
+    expect(source.chordAt(0), 'G');
+    expect(source.chordAt(32), 'D'); // source itself untouched
+    final pasted = lines[1];
+    expect(pasted.length, 33); // grew to fit, not clipped to its original 4
+    expect(pasted.chordAt(0), 'G');
+    expect(pasted.chordAt(32), 'D'); // the appended slot made it across
+  });
+
   testWidgets('dragging a line by its handle reorders it within the section',
       (tester) async {
     SharedPreferences.setMockInitialValues({});
