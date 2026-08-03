@@ -68,3 +68,11 @@ infra/      Terraform — DynamoDB, Lambda, API Gateway, S3+CloudFront, budget a
 | `GET /songs/{id}` | Full song incl. tab data |
 | `PUT /songs/{id}` | Replace song (owner only, 403 otherwise) |
 | `DELETE /songs/{id}` | Permanent delete (owner only) |
+
+# DB
+
+Dev note: to query the table: 
+```
+aws dynamodb scan --table-name guitar-tabs --region us-east-1 \
+  --projection-expression "PK, title, artist, updatedAt"
+```
